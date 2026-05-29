@@ -1,7 +1,7 @@
 # data/fetcher.py
 import time
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 from pybit.unified_trading import HTTP
@@ -11,6 +11,8 @@ import config
 logger = logging.getLogger(__name__)
 
 COLUMNS = ["timestamp", "open", "high", "low", "close", "volume", "turnover"]
+
+_INTERVAL_DELTA = {"60": timedelta(hours=1), "D": timedelta(days=1)}
 
 
 def fetch_ohlcv(
@@ -25,9 +27,10 @@ def fetch_ohlcv(
 
     all_batches = []
     current_start = start_dt
+    batch_count = 0
 
     while current_start < end_dt:
-        rows = _fetch_batch(session, symbol, interval, _to_ms(current_start), _to_ms(end_dt))
+        rows = _fetch_batch(session, symbol, interval, _to_ms(current_start))
         if not rows:
             break
 
@@ -39,8 +42,14 @@ def fetch_ohlcv(
             break
 
         all_batches.append(batch_df)
-        last_ts_ms = int(batch_df["timestamp"].iloc[-1].timestamp() * 1000)
-        current_start = _from_ms(last_ts_ms + 1)
+        batch_count += 1
+        last_ts = batch_df["timestamp"].iloc[-1].to_pydatetime()
+        current_start = last_ts + _INTERVAL_DELTA[interval]
+
+        if batch_count % 10 == 0:
+            total_rows = sum(len(b) for b in all_batches)
+            logger.info(f"  [{symbol} {interval}] batch {batch_count} | 已取得 {total_rows:,} 筆 | 進度至 {batch_df['timestamp'].iloc[-1].strftime('%Y-%m-%d')}")
+
         time.sleep(config.RATE_LIMIT_SLEEP)
 
     if not all_batches:
@@ -49,7 +58,7 @@ def fetch_ohlcv(
     return pd.concat(all_batches, ignore_index=True)
 
 
-def _fetch_batch(session, symbol: str, interval: str, start_ms: int, end_ms: int) -> list:
+def _fetch_batch(session, symbol: str, interval: str, start_ms: int) -> list:
     for attempt in range(config.MAX_RETRIES):
         try:
             resp = session.get_kline(
@@ -57,7 +66,6 @@ def _fetch_batch(session, symbol: str, interval: str, start_ms: int, end_ms: int
                 symbol=symbol,
                 interval=interval,
                 start=start_ms,
-                end=end_ms,
                 limit=200,
             )
             return resp["result"]["list"]
