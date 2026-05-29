@@ -45,7 +45,10 @@ def write_excel(
         hourly_df_tz_naive.to_excel(writer, sheet_name="1H", index=False)
         daily_df_tz_naive.to_excel(writer, sheet_name="1D", index=False)
 
-        for sheet_name in ("1H", "1D"):
-            writer.sheets[sheet_name].freeze_panes = "A2"
+        for sheet_name, fmt in (("1H", "YYYY-MM-DD HH:MM:SS"), ("1D", "YYYY-MM-DD")):
+            ws = writer.sheets[sheet_name]
+            ws.freeze_panes = "A2"
+            for cell in ws["A"][1:]:  # column A = timestamp, skip header
+                cell.number_format = fmt
 
     logger.info(f"Excel saved: {path}")
