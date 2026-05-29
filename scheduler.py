@@ -58,13 +58,22 @@ def incremental_update(symbol: str, interval: str) -> None:
 def run() -> None:
     for symbol in config.SYMBOLS:
         dfs: dict = {}
+        skip_symbol = False
 
         for interval in config.INTERVALS:
             incremental_update(symbol, interval)
             label = config.INTERVAL_LABELS[interval]
-            dfs[interval] = pd.read_parquet(
-                config.STORAGE_RAW / f"{symbol}_{label}.parquet"
-            )
+            parquet_path = config.STORAGE_RAW / f"{symbol}_{label}.parquet"
+
+            if not parquet_path.exists():
+                logger.error(f"跳過 {symbol} Excel 更新：{parquet_path} 不存在")
+                skip_symbol = True
+                break
+
+            dfs[interval] = pd.read_parquet(parquet_path)
+
+        if skip_symbol:
+            continue
 
         excel_path = config.STORAGE_EXCEL / f"{symbol}.xlsx"
         exporter.write_excel(excel_path, dfs["60"], dfs["D"])
