@@ -1,0 +1,75 @@
+# features/indicators.py
+import pandas as pd
+import pandas_ta as ta
+
+
+def compute(hourly_df: pd.DataFrame, daily_df: pd.DataFrame) -> pd.DataFrame:
+    df = hourly_df.copy()
+
+    # RSI: [7, 14, 24]
+    for period in [7, 14, 24]:
+        df[f"rsi_{period}"] = ta.rsi(df["close"], length=period)
+
+    # PPO replaces MACD — output is percentage-based, no absolute-value trap
+    # pandas-ta column order varies by version; use prefix matching for safety
+    ppo = ta.ppo(df["close"], fast=12, slow=26, signal=9)
+    ppo_col     = [c for c in ppo.columns if c.startswith("PPO_")][0]
+    ppo_sig_col = [c for c in ppo.columns if c.startswith("PPOs")][0]
+    ppo_hist_col = [c for c in ppo.columns if c.startswith("PPOh")][0]
+    df["ppo"]        = ppo[ppo_col]
+    df["ppo_signal"] = ppo[ppo_sig_col]
+    df["ppo_hist"]   = ppo[ppo_hist_col]
+
+    # ATR: [14, 24]
+    for period in [14, 24]:
+        df[f"atr_{period}"] = ta.atr(df["high"], df["low"], df["close"], length=period)
+
+    # Bollinger Band width = (upper - lower) / middle
+    # pandas-ta bbands columns order: BBL, BBM, BBU, BBB, BBP
+    for length, std in [(20, 2.0), (50, 2.5)]:
+        bb = ta.bbands(df["close"], length=length, std=std)
+        lower, middle, upper = bb.iloc[:, 0], bb.iloc[:, 1], bb.iloc[:, 2]
+        df[f"bband_width_{length}"] = (upper - lower) / middle
+
+    # MA Bias = (close - SMA_N) / SMA_N
+    for period in [20, 50, 200]:
+        sma = ta.sma(df["close"], length=period)
+        df[f"ma_bias_{period}"] = (df["close"] - sma) / sma
+
+    # Volume / Turnover ratios
+    for period in [12, 24]:
+        df[f"vol_ratio_{period}"]      = df["volume"]   / df["volume"].rolling(period).mean()
+        df[f"turnover_ratio_{period}"] = df["turnover"] / df["turnover"].rolling(period).mean()
+
+    # Daily indicators — computed independently, then merged with look-ahead prevention
+    df = _attach_daily_features(df, daily_df)
+    return df
+
+
+def _attach_daily_features(
+    hourly_df: pd.DataFrame,
+    daily_df: pd.DataFrame,
+) -> pd.DataFrame:
+    daily = daily_df.copy()
+
+    daily["daily_rsi_14"] = ta.rsi(daily["close"], length=14)
+    daily["daily_atr_14"] = ta.atr(daily["high"], daily["low"], daily["close"], length=14)
+    for period in [20, 50, 200]:
+        sma = ta.sma(daily["close"], length=period)
+        daily[f"daily_ma_bias_{period}"] = (daily["close"] - sma) / sma
+
+    # Shift forward by 1 day to prevent look-ahead bias (same logic as Phase 1)
+    daily["date_available"] = daily["timestamp"] + pd.Timedelta(days=1)
+
+    feat_cols = [
+        "date_available", "daily_rsi_14", "daily_atr_14",
+        "daily_ma_bias_20", "daily_ma_bias_50", "daily_ma_bias_200",
+    ]
+    merged = pd.merge_asof(
+        hourly_df.sort_values("timestamp"),
+        daily[feat_cols].sort_values("date_available"),
+        left_on="timestamp",
+        right_on="date_available",
+        direction="backward",
+    )
+    return merged.drop(columns=["date_available"], errors="ignore")
