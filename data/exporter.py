@@ -1,7 +1,10 @@
 # data/exporter.py
+import logging
 from pathlib import Path
 
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 def append_parquet(path: Path, new_df: pd.DataFrame) -> None:
@@ -18,6 +21,7 @@ def append_parquet(path: Path, new_df: pd.DataFrame) -> None:
         combined = new_df.sort_values("timestamp").reset_index(drop=True)
 
     combined.to_parquet(path, index=False)
+    logger.info(f"Parquet saved: {path} ({len(combined):,} rows)")
 
 
 def write_excel(
@@ -31,11 +35,11 @@ def write_excel(
     # Convert timezone-aware timestamps to timezone-naive for Excel compatibility
     hourly_df_tz_naive = hourly_df.copy()
     if hourly_df_tz_naive["timestamp"].dt.tz is not None:
-        hourly_df_tz_naive["timestamp"] = hourly_df_tz_naive["timestamp"].dt.tz_localize(None)
+        hourly_df_tz_naive["timestamp"] = hourly_df_tz_naive["timestamp"].dt.tz_convert(None)
 
     daily_df_tz_naive = daily_df.copy()
     if daily_df_tz_naive["timestamp"].dt.tz is not None:
-        daily_df_tz_naive["timestamp"] = daily_df_tz_naive["timestamp"].dt.tz_localize(None)
+        daily_df_tz_naive["timestamp"] = daily_df_tz_naive["timestamp"].dt.tz_convert(None)
 
     with pd.ExcelWriter(path, engine="openpyxl") as writer:
         hourly_df_tz_naive.to_excel(writer, sheet_name="1H", index=False)
@@ -43,3 +47,5 @@ def write_excel(
 
         for sheet_name in ("1H", "1D"):
             writer.sheets[sheet_name].freeze_panes = "A2"
+
+    logger.info(f"Excel saved: {path}")
