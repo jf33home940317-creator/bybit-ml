@@ -5,3 +5,5 @@ openpyxl>=3.1.0
 python-dotenv>=1.0.0
 pytest>=7.0.0
 numpy>=1.26.0,<2
+pandas-ta>=0.3.14b
+scipy>=1.10.0

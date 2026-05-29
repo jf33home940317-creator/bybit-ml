@@ -25,6 +25,7 @@ HISTORY_START = "2022-01-01"
 BASE_DIR = Path(__file__).parent
 STORAGE_RAW = BASE_DIR / "storage" / "raw"
 STORAGE_EXCEL = BASE_DIR / "storage" / "excel"
+STORAGE_FEATURES = BASE_DIR / "storage" / "features"
 
 OVERLAP_HOURS = 3   # overlap candles re-fetched to overwrite unclosed candles from previous run
 OVERLAP_DAYS = 3
