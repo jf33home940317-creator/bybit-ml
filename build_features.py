@@ -10,4 +10,7 @@ logging.basicConfig(
 
 if __name__ == "__main__":
     for symbol in config.SYMBOLS:
-        builder.build(symbol)
+        try:
+            builder.build(symbol)
+        except Exception as exc:
+            logging.error("[%s] build failed: %s", symbol, exc, exc_info=True)

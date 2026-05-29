@@ -20,6 +20,13 @@ def build(
     features_dir = Path(features_dir) if features_dir is not None else config.STORAGE_FEATURES
     features_dir.mkdir(parents=True, exist_ok=True)
 
+    for _path in (raw_dir / f"{symbol}_1h.parquet", raw_dir / f"{symbol}_1d.parquet"):
+        if not _path.exists():
+            raise FileNotFoundError(
+                f"[{symbol}] Raw data not found: {_path}. "
+                "Run the Phase 1 data pipeline first."
+            )
+
     # 1. Load Phase 1 Parquet
     hourly_df = pd.read_parquet(raw_dir / f"{symbol}_1h.parquet")
     daily_df  = pd.read_parquet(raw_dir / f"{symbol}_1d.parquet")
@@ -34,12 +41,12 @@ def build(
     df = labels.compute(df)
 
     # 5. Clean: replace inf first, then drop NaN (order matters)
-    df.replace([np.inf, -np.inf], np.nan, inplace=True)
-    df.dropna(inplace=True)
-    df.reset_index(drop=True, inplace=True)
+    df = df.replace([np.inf, -np.inf], np.nan)
+    df = df.dropna()
+    df = df.reset_index(drop=True)
 
     # 6. Statistical validation (operates on clean data)
-    validator.report(df, features_dir / "validation_report.json", symbol=symbol)
+    validator.report(df, features_dir / f"{symbol}_validation_report.json", symbol=symbol)
 
     # 7. Save feature matrix
     out_path = features_dir / f"{symbol}_features.parquet"
