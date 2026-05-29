@@ -3,6 +3,16 @@ import pandas as pd
 import pandas_ta as ta
 
 
+def _find_ppo_col(ppo_df: "pd.DataFrame", prefix: str) -> str:
+    matches = [c for c in ppo_df.columns if c.startswith(prefix)]
+    if len(matches) != 1:
+        raise ValueError(
+            f"Expected exactly 1 PPO column with prefix '{prefix}', "
+            f"got {matches}. pandas-ta columns: {list(ppo_df.columns)}"
+        )
+    return matches[0]
+
+
 def compute(hourly_df: pd.DataFrame, daily_df: pd.DataFrame) -> pd.DataFrame:
     df = hourly_df.copy()
 
@@ -13,9 +23,9 @@ def compute(hourly_df: pd.DataFrame, daily_df: pd.DataFrame) -> pd.DataFrame:
     # PPO replaces MACD — output is percentage-based, no absolute-value trap
     # pandas-ta column order varies by version; use prefix matching for safety
     ppo = ta.ppo(df["close"], fast=12, slow=26, signal=9)
-    ppo_col     = [c for c in ppo.columns if c.startswith("PPO_")][0]
-    ppo_sig_col = [c for c in ppo.columns if c.startswith("PPOs")][0]
-    ppo_hist_col = [c for c in ppo.columns if c.startswith("PPOh")][0]
+    ppo_col      = _find_ppo_col(ppo, "PPO_")
+    ppo_sig_col  = _find_ppo_col(ppo, "PPOs")
+    ppo_hist_col = _find_ppo_col(ppo, "PPOh")
     df["ppo"]        = ppo[ppo_col]
     df["ppo_signal"] = ppo[ppo_sig_col]
     df["ppo_hist"]   = ppo[ppo_hist_col]

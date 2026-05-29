@@ -67,3 +67,27 @@ class TestIndicators:
         for col in ["daily_rsi_14", "daily_atr_14",
                     "daily_ma_bias_20", "daily_ma_bias_50", "daily_ma_bias_200"]:
             assert col in df.columns, f"Missing: {col}"
+
+    def test_ppo_signal_and_hist_not_swapped(self):
+        """ppo_hist must equal ppo - ppo_signal (the histogram identity)."""
+        from features.indicators import compute
+        df = compute(_make_hourly(), _make_daily()).dropna(subset=["ppo", "ppo_signal", "ppo_hist"])
+        expected = df["ppo"] - df["ppo_signal"]
+        np.testing.assert_allclose(
+            df["ppo_hist"].values, expected.values, rtol=1e-5,
+            err_msg="ppo_signal and ppo_hist appear to be swapped",
+        )
+
+    def test_rsi_bounded_0_to_100(self):
+        """RSI must stay within [0, 100]."""
+        from features.indicators import compute
+        df = compute(_make_hourly(), _make_daily()).dropna(subset=["rsi_7", "rsi_14", "rsi_24"])
+        for col in ["rsi_7", "rsi_14", "rsi_24"]:
+            assert df[col].between(0, 100).all(), f"{col} out of [0, 100]"
+
+    def test_bband_width_is_non_negative(self):
+        """Bollinger Band width must be >= 0."""
+        from features.indicators import compute
+        df = compute(_make_hourly(), _make_daily()).dropna(subset=["bband_width_20", "bband_width_50"])
+        assert (df["bband_width_20"] >= 0).all()
+        assert (df["bband_width_50"] >= 0).all()
