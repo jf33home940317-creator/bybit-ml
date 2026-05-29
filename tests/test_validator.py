@@ -52,3 +52,19 @@ class TestValidator:
         report(_make_imbalanced_df(positive_rate=0.05), out)
         data = json.loads(out.read_text())
         assert data["class_balance"]["target_fixed"]["warning"] is not None
+
+    def test_imbalanced_target_atr_triggers_warning(self, tmp_path):
+        """target_atr with 90% positive rate (> 80%) triggers warning independently."""
+        from features.validator import report
+        import numpy as np
+        out = tmp_path / "report.json"
+        df = _make_balanced_df()
+        # target_fixed stays balanced (~50%), target_atr is severely imbalanced
+        n = len(df)
+        atr_labels = np.ones(n)
+        atr_labels[:int(n * 0.10)] = 0.0   # 90% positive rate
+        df["target_atr"] = atr_labels
+        report(df, out)
+        data = json.loads(out.read_text())
+        assert data["class_balance"]["target_atr"]["warning"] is not None
+        assert data["class_balance"]["target_fixed"]["warning"] is None

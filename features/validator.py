@@ -16,7 +16,7 @@ _EXCLUDE = {
 }
 
 
-def report(df: pd.DataFrame, output_path: Path) -> None:
+def report(df: pd.DataFrame, output_path: Path, symbol: str = "") -> None:
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -24,6 +24,7 @@ def report(df: pd.DataFrame, output_path: Path) -> None:
 
     result = {
         "metadata": {
+            "symbol": symbol,
             "total_rows": len(df),
             "feature_columns": feature_cols,
             "target_columns": TARGET_COLS,
@@ -85,6 +86,8 @@ def report(df: pd.DataFrame, output_path: Path) -> None:
         logger.error(f"Data quality: {nan_count} NaNs, {inf_count} infs still present!")
     else:
         logger.info("Data quality: 0 NaN, 0 inf OK")
+
+    result["data_quality"] = {"nan_count": nan_count, "inf_count": inf_count}
 
     output_path.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
     logger.info(f"Validation report: {output_path}")
