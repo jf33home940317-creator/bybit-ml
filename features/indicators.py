@@ -78,9 +78,15 @@ def _attach_daily_features(
         "date_available", "daily_rsi_14", "daily_atr_14",
         "daily_ma_bias_20", "daily_ma_bias_50", "daily_ma_bias_200",
     ]
+    hourly_sorted = hourly_df.sort_values("timestamp").copy()
+    daily_sorted = daily[feat_cols].sort_values("date_available").copy()
+    # Normalize precision: Parquet reads as ms, in-memory ops may produce us
+    hourly_sorted["timestamp"] = hourly_sorted["timestamp"].astype("datetime64[us, UTC]")
+    daily_sorted["date_available"] = daily_sorted["date_available"].astype("datetime64[us, UTC]")
+
     merged = pd.merge_asof(
-        hourly_df.sort_values("timestamp"),
-        daily[feat_cols].sort_values("date_available"),
+        hourly_sorted,
+        daily_sorted,
         left_on="timestamp",
         right_on="date_available",
         direction="backward",
