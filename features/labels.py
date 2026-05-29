@@ -21,13 +21,11 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
         highs, lows,
         tp=closes * (1.0 + TP_PCT_FIXED),
         sl=closes * (1.0 - SL_PCT_FIXED),
-        n=len(df),
     )
     df["target_atr"] = _barrier_labels(
         highs, lows,
         tp=closes + ATR_TP_MULT * atrs,
         sl=closes - ATR_SL_MULT * atrs,
-        n=len(df),
     )
     return df
 
@@ -37,8 +35,8 @@ def _barrier_labels(
     lows: np.ndarray,
     tp: np.ndarray,
     sl: np.ndarray,
-    n: int,
 ) -> np.ndarray:
+    n = len(highs)
     n_valid = n - HORIZON
     labels = np.full(n, np.nan)
     if n_valid <= 0:

@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-HORIZON = 24
+from features.labels import HORIZON
 
 
 def _make_df(n, closes, highs, lows):
@@ -79,3 +79,16 @@ class TestLabels:
         result = compute(df)
         assert result["target_fixed"].iloc[-HORIZON:].isna().all()
         assert result["target_atr"].iloc[-HORIZON:].isna().all()
+
+    def test_atr_barrier_uses_multipliers(self):
+        """target_atr TP = close + 3*atr → high=102.1 misses TP when atr=1 (TP=103)."""
+        from features.labels import compute
+        n = HORIZON + 5
+        closes = np.full(n, 100.0)
+        highs = np.full(n, 100.5)
+        lows = np.full(n, 99.5)
+        highs[5] = 102.1          # hits target_fixed TP (102.0) but NOT target_atr TP (103.0)
+        df = _make_df(n, closes, highs, lows)
+        result = compute(df)
+        assert result["target_fixed"].iloc[0] == 1.0   # fixed TP hit
+        assert result["target_atr"].iloc[0] == 0.0     # ATR TP not hit (need 103.0, got 102.1)
