@@ -10,6 +10,11 @@ API_SECRET = os.getenv("BYBIT_API_SECRET", "")
 SYMBOLS = ["BTCUSDT", "ETHUSDT"]
 INTERVALS = ["60", "D"]
 
+INTERVAL_TO_FREQ = {
+    "60": "1h",
+    "D":  "1D",
+}
+
 INTERVAL_LABELS = {
     "60": "1h",
     "D": "1d",

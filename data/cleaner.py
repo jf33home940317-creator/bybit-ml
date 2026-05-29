@@ -3,12 +3,10 @@ import logging
 
 import pandas as pd
 
+from config import INTERVAL_TO_FREQ
+
 logger = logging.getLogger(__name__)
 
-INTERVAL_TO_FREQ = {
-    "60": "1h",
-    "D":  "1D",
-}
 OHLC_COLS   = ["open", "high", "low", "close"]
 VOLUME_COLS = ["volume", "turnover"]
 DAILY_COLS  = ["open", "high", "low", "close", "volume", "turnover"]
@@ -22,9 +20,15 @@ def clean(df: pd.DataFrame, interval: str, label: str = "") -> pd.DataFrame:
     df = df.sort_values("timestamp").reset_index(drop=True)
     dupes_removed = original_len - len(df)
 
+    # Guard against empty DataFrame
+    if df.empty:
+        return df
+
     # 2. 確保 timestamp 有 UTC 時區
     if df["timestamp"].dt.tz is None:
         df["timestamp"] = df["timestamp"].dt.tz_localize("UTC")
+    elif str(df["timestamp"].dt.tz) != "UTC":
+        df["timestamp"] = df["timestamp"].dt.tz_convert("UTC")
 
     # 3. 補缺失 K 線
     freq = INTERVAL_TO_FREQ[interval]
@@ -52,6 +56,13 @@ def align_daily_to_hourly(
     hourly_df: pd.DataFrame,
     daily_df: pd.DataFrame,
 ) -> pd.DataFrame:
+    # Guard against empty daily_df
+    if daily_df.empty:
+        result = hourly_df.copy()
+        for col in [f"daily_{c}" for c in DAILY_COLS]:
+            result[col] = float("nan")
+        return result
+
     daily = daily_df.copy()
 
     # 日線向後位移一天，防止 look-ahead bias
