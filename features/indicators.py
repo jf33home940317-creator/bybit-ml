@@ -30,8 +30,8 @@ def compute(hourly_df: pd.DataFrame, daily_df: pd.DataFrame) -> pd.DataFrame:
     df["ppo_signal"] = ppo[ppo_sig_col]
     df["ppo_hist"]   = ppo[ppo_hist_col]
 
-    # ATR: [14, 24]
-    for period in [14, 24]:
+    # ATR: [14, 72] — 短期(14h)/中期(72h=3天)，拉開級距避免 atr_14↔atr_24 高共線性
+    for period in [14, 72]:
         df[f"atr_{period}"] = ta.atr(df["high"], df["low"], df["close"], length=period)
 
     # Bollinger Band width = (upper - lower) / middle

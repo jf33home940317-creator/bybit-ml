@@ -40,7 +40,7 @@ class TestIndicators:
     def test_atr_columns_exist(self):
         from features.indicators import compute
         df = compute(_make_hourly(), _make_daily())
-        for col in ["atr_14", "atr_24"]:
+        for col in ["atr_14", "atr_72"]:
             assert col in df.columns, f"Missing: {col}"
 
     def test_bband_width_columns_exist(self):
