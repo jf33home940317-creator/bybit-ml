@@ -28,7 +28,7 @@ class TestIndicators:
     def test_rsi_columns_exist(self):
         from features.indicators import compute
         df = compute(_make_hourly(), _make_daily())
-        for col in ["rsi_7", "rsi_14", "rsi_24"]:
+        for col in ["rsi_7", "rsi_14", "rsi_50"]:
             assert col in df.columns, f"Missing: {col}"
 
     def test_ppo_columns_exist(self):
@@ -58,7 +58,7 @@ class TestIndicators:
     def test_volume_ratio_columns_exist(self):
         from features.indicators import compute
         df = compute(_make_hourly(), _make_daily())
-        for col in ["vol_ratio_12", "vol_ratio_24", "turnover_ratio_12", "turnover_ratio_24"]:
+        for col in ["turnover_ratio_12", "turnover_ratio_24"]:
             assert col in df.columns, f"Missing: {col}"
 
     def test_daily_feature_columns_exist(self):
@@ -81,8 +81,8 @@ class TestIndicators:
     def test_rsi_bounded_0_to_100(self):
         """RSI must stay within [0, 100]."""
         from features.indicators import compute
-        df = compute(_make_hourly(), _make_daily()).dropna(subset=["rsi_7", "rsi_14", "rsi_24"])
-        for col in ["rsi_7", "rsi_14", "rsi_24"]:
+        df = compute(_make_hourly(), _make_daily()).dropna(subset=["rsi_7", "rsi_14", "rsi_50"])
+        for col in ["rsi_7", "rsi_14", "rsi_50"]:
             assert df[col].between(0, 100).all(), f"{col} out of [0, 100]"
 
     def test_bband_width_is_non_negative(self):

@@ -16,8 +16,8 @@ def _find_ppo_col(ppo_df: "pd.DataFrame", prefix: str) -> str:
 def compute(hourly_df: pd.DataFrame, daily_df: pd.DataFrame) -> pd.DataFrame:
     df = hourly_df.copy()
 
-    # RSI: [7, 14, 24]
-    for period in [7, 14, 24]:
+    # RSI: [7, 14, 50] — 短/標準/中長，拉開級距避免 rsi_14↔rsi_24 高共線性
+    for period in [7, 14, 50]:
         df[f"rsi_{period}"] = ta.rsi(df["close"], length=period)
 
     # PPO replaces MACD — output is percentage-based, no absolute-value trap
@@ -49,9 +49,8 @@ def compute(hourly_df: pd.DataFrame, daily_df: pd.DataFrame) -> pd.DataFrame:
         sma = ta.sma(df["close"], length=period)
         df[f"ma_bias_{period}"] = (df["close"] - sma) / sma
 
-    # Volume / Turnover ratios
+    # Turnover ratio only — vol_ratio 與 turnover_ratio r=1.00 完全重複，turnover 含價格權重更能反映資金力道
     for period in [12, 24]:
-        df[f"vol_ratio_{period}"]      = df["volume"]   / df["volume"].rolling(period).mean()
         df[f"turnover_ratio_{period}"] = df["turnover"] / df["turnover"].rolling(period).mean()
 
     # Daily indicators — computed independently, then merged with look-ahead prevention
