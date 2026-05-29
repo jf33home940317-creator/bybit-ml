@@ -44,6 +44,7 @@ class TestBuilder:
         _write_raw_parquets(raw_dir, "BTCUSDT")
         build("BTCUSDT", raw_dir=raw_dir, features_dir=feat_dir)
         df = pd.read_parquet(feat_dir / "BTCUSDT_features.parquet")
+        assert len(df) >= 500, f"Expected ≥500 rows, got {len(df)}"
         bad = df.isna().sum()
         assert bad.sum() == 0, f"NaNs found:\n{bad[bad > 0]}"
 
@@ -55,6 +56,7 @@ class TestBuilder:
         _write_raw_parquets(raw_dir, "BTCUSDT")
         build("BTCUSDT", raw_dir=raw_dir, features_dir=feat_dir)
         df = pd.read_parquet(feat_dir / "BTCUSDT_features.parquet")
+        assert len(df) >= 500, f"Expected ≥500 rows, got {len(df)}"
         numeric = df.select_dtypes(include=[float, int])
         assert not (numeric.values == float("inf")).any()
         assert not (numeric.values == float("-inf")).any()
@@ -67,6 +69,7 @@ class TestBuilder:
         _write_raw_parquets(raw_dir, "BTCUSDT")
         build("BTCUSDT", raw_dir=raw_dir, features_dir=feat_dir)
         df = pd.read_parquet(feat_dir / "BTCUSDT_features.parquet")
+        assert len(df) >= 500, f"Expected ≥500 rows, got {len(df)}"
         assert "target_fixed" in df.columns
         assert "target_atr" in df.columns
         assert df["target_fixed"].isin([0.0, 1.0]).all()

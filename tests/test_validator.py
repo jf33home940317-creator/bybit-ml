@@ -35,6 +35,8 @@ class TestValidator:
         assert "metadata" in data
         assert "feature_columns" in data["metadata"]
         assert "target_columns" in data["metadata"]
+        assert "close" not in data["metadata"]["feature_columns"]
+        assert "target_fixed" not in data["metadata"]["feature_columns"]
 
     def test_report_contains_class_balance(self, tmp_path):
         """class_balance section includes an entry for target_fixed."""

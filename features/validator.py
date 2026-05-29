@@ -58,8 +58,9 @@ def report(df: pd.DataFrame, output_path: Path, symbol: str = "") -> None:
             try:
                 r, _ = pointbiserialr(df[feat].values, y)
                 corrs[feat] = round(float(r), 4)
-            except Exception:
+            except Exception as exc:
                 corrs[feat] = None
+                logger.warning("  [%s] correlation failed: %s", feat, exc)
         result[f"correlations_with_{target}"] = dict(
             sorted(corrs.items(), key=lambda x: abs(x[1] or 0), reverse=True)
         )

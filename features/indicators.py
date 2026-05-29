@@ -36,9 +36,12 @@ def compute(hourly_df: pd.DataFrame, daily_df: pd.DataFrame) -> pd.DataFrame:
 
     # Bollinger Band width = (upper - lower) / middle
     # pandas-ta bbands columns order: BBL, BBM, BBU, BBB, BBP
-    for length, std in [(20, 2.0), (50, 2.5)]:
-        bb = ta.bbands(df["close"], length=length, std=std)
-        lower, middle, upper = bb.iloc[:, 0], bb.iloc[:, 1], bb.iloc[:, 2]
+    for length, std_val in [(20, 2.0), (50, 2.5)]:
+        bb = ta.bbands(df["close"], length=length, lower_std=std_val, upper_std=std_val)
+        bbl_col = next(c for c in bb.columns if c.startswith("BBL"))
+        bbm_col = next(c for c in bb.columns if c.startswith("BBM"))
+        bbu_col = next(c for c in bb.columns if c.startswith("BBU"))
+        lower, middle, upper = bb[bbl_col], bb[bbm_col], bb[bbu_col]
         df[f"bband_width_{length}"] = (upper - lower) / middle
 
     # MA Bias = (close - SMA_N) / SMA_N
