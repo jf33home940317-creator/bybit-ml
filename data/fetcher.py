@@ -27,7 +27,7 @@ def fetch_ohlcv(
     current_start = start_dt
 
     while current_start < end_dt:
-        rows = _fetch_batch(session, symbol, interval, _to_ms(current_start))
+        rows = _fetch_batch(session, symbol, interval, _to_ms(current_start), _to_ms(end_dt))
         if not rows:
             break
 
@@ -49,7 +49,7 @@ def fetch_ohlcv(
     return pd.concat(all_batches, ignore_index=True)
 
 
-def _fetch_batch(session, symbol: str, interval: str, start_ms: int) -> list:
+def _fetch_batch(session, symbol: str, interval: str, start_ms: int, end_ms: int) -> list:
     for attempt in range(config.MAX_RETRIES):
         try:
             resp = session.get_kline(
@@ -57,6 +57,7 @@ def _fetch_batch(session, symbol: str, interval: str, start_ms: int) -> list:
                 symbol=symbol,
                 interval=interval,
                 start=start_ms,
+                end=end_ms,
                 limit=200,
             )
             return resp["result"]["list"]
@@ -66,7 +67,6 @@ def _fetch_batch(session, symbol: str, interval: str, start_ms: int) -> list:
             wait = 2 ** attempt
             logger.warning(f"API error (attempt {attempt + 1}/{config.MAX_RETRIES}), retry in {wait}s: {exc}")
             time.sleep(wait)
-    return []
 
 
 def _parse_rows(rows: list) -> pd.DataFrame:
