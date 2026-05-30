@@ -1,5 +1,7 @@
+import json
 import numpy as np
 import pandas as pd
+import pytest
 from pathlib import Path
 
 
@@ -74,3 +76,96 @@ class TestBuilder:
         assert "target_atr" in df.columns
         assert df["target_fixed"].isin([0.0, 1.0]).all()
         assert df["target_atr"].isin([0.0, 1.0]).all()
+
+
+# ---------------------------------------------------------------------------
+# models.builder tests
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def synthetic_features_dir(tmp_path):
+    """建立合成 features.parquet 與 validation_report.json"""
+    symbol = "TESTUSDT"
+    n_rows = 500   # 足夠小（快速訓練）但足夠大（5 fold 能跑）
+    n_features = 5
+    feature_cols = [f"f{i}" for i in range(n_features)]
+
+    np.random.seed(42)
+    X = np.random.randn(n_rows, n_features)
+    # 可學習 signal：target = (f0 > 0)
+    target_fixed = (X[:, 0] > 0).astype(int)
+    target_atr   = (X[:, 1] > 0).astype(int)
+
+    df = pd.DataFrame(X, columns=feature_cols)
+    df["target_fixed"] = target_fixed
+    df["target_atr"]   = target_atr
+
+    features_dir = tmp_path / "features"
+    features_dir.mkdir()
+    df.to_parquet(features_dir / f"{symbol}_features.parquet", index=False)
+
+    validation_report = {
+        "metadata": {
+            "symbol": symbol,
+            "total_rows": n_rows,
+            "feature_columns": feature_cols,
+            "target_columns": ["target_fixed", "target_atr"],
+        }
+    }
+    (features_dir / f"{symbol}_validation_report.json").write_text(
+        json.dumps(validation_report)
+    )
+    return features_dir, symbol
+
+
+class TestModelBuilder:
+    """End-to-end tests for models.builder.build()."""
+
+    SYMBOL = "TESTUSDT"
+    TARGET = "target_fixed"
+
+    def _run_build(self, synthetic_features_dir, tmp_path):
+        from models.builder import build
+        features_dir, symbol = synthetic_features_dir
+        models_dir = tmp_path / "models"
+        build(symbol, self.TARGET, features_dir=features_dir, models_dir=models_dir)
+        return models_dir
+
+    def test_fold_pkl_files_exist(self, synthetic_features_dir, tmp_path):
+        """確認 5 個 fold pkl 存在。"""
+        models_dir = self._run_build(synthetic_features_dir, tmp_path)
+        for fold_idx in range(1, 6):
+            pkl = models_dir / f"{self.SYMBOL}_{self.TARGET}_fold{fold_idx}.pkl"
+            assert pkl.exists(), f"Missing fold pkl: {pkl.name}"
+
+    def test_final_pkl_exists(self, synthetic_features_dir, tmp_path):
+        """確認 final model pkl 存在。"""
+        models_dir = self._run_build(synthetic_features_dir, tmp_path)
+        final_pkl = models_dir / f"{self.SYMBOL}_{self.TARGET}_final.pkl"
+        assert final_pkl.exists(), f"Missing final pkl: {final_pkl.name}"
+
+    def test_training_report_exists_and_valid(self, synthetic_features_dir, tmp_path):
+        """確認 JSON 報告存在且含必要欄位。"""
+        models_dir = self._run_build(synthetic_features_dir, tmp_path)
+        report_path = models_dir / f"{self.SYMBOL}_{self.TARGET}_training_report.json"
+        assert report_path.exists(), "Training report JSON not found"
+        report = json.loads(report_path.read_text())
+        for key in ("symbol", "target", "n_folds", "mean_best_iteration",
+                    "folds", "aggregate", "feature_importance"):
+            assert key in report, f"Missing key in report: {key}"
+
+    def test_training_report_fold_count(self, synthetic_features_dir, tmp_path):
+        """確認 JSON 中 n_folds == 5 且 folds 列表長度 == 5。"""
+        models_dir = self._run_build(synthetic_features_dir, tmp_path)
+        report_path = models_dir / f"{self.SYMBOL}_{self.TARGET}_training_report.json"
+        report = json.loads(report_path.read_text())
+        assert report["n_folds"] == 5, f"Expected n_folds=5, got {report['n_folds']}"
+        assert len(report["folds"]) == 5, (
+            f"Expected 5 folds in list, got {len(report['folds'])}"
+        )
+
+    def test_feature_importance_png_exists(self, synthetic_features_dir, tmp_path):
+        """確認 feature importance PNG 存在。"""
+        models_dir = self._run_build(synthetic_features_dir, tmp_path)
+        png = models_dir / f"{self.SYMBOL}_{self.TARGET}_feature_importance.png"
+        assert png.exists(), f"Missing feature importance PNG: {png.name}"
