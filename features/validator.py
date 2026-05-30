@@ -13,6 +13,7 @@ _EXCLUDE = {
     "timestamp", "open", "high", "low", "close", "volume", "turnover",
     "daily_open", "daily_high", "daily_low", "daily_close",
     "daily_volume", "daily_turnover",
+    "atr_14", "atr_72", "daily_atr_14",
 }
 
 
