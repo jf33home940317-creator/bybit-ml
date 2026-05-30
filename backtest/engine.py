@@ -140,7 +140,7 @@ def run_threshold_scan(
         pnl_vals = trades_df['pnl'].values
         n_trades = len(pnl_vals)
         mean_pnl = float(pnl_vals.mean())
-        std_pnl  = float(pnl_vals.std())
+        std_pnl  = float(pnl_vals.std(ddof=1))
         sharpe   = float(mean_pnl / std_pnl * np.sqrt(n_trades / total_years)) if std_pnl > 0 else 0.0
 
         cumsum      = np.cumsum(pnl_vals)
