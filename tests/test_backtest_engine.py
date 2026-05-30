@@ -3,6 +3,7 @@ import pandas as pd
 import pytest
 from backtest.engine import generate_oof_probabilities
 from backtest.engine import compute_trade_pnl
+from backtest.engine import run_threshold_scan
 from models.splitter import purged_walk_forward_split
 
 
@@ -105,3 +106,27 @@ class TestComputeTradePnl:
         assert row['outcome'] == 'timeout'
         assert abs(row['pnl'] - (0.01 - 0.002)) < 1e-9
         assert row['holding_bars'] == 24
+
+
+class TestRunThresholdScan:
+
+    def test_min_trades_filter(self):
+        """Thresholds yielding fewer than min_trades trades must not appear in results."""
+        n = 600
+        df = _make_df(n, close=1000.0)
+        feature_cols = []
+        # Model returns exactly 0.60 for all OOF rows.
+        # threshold=0.50 → all OOF rows pass (many trades).
+        # threshold=0.65 → 0 rows pass (proba never reaches 0.65).
+        fold_models = [_ConstantModel(0.60)] * 5
+
+        results = run_threshold_scan(
+            df, feature_cols, fold_models,
+            target='target_fixed',
+            thresholds=np.array([0.50, 0.65]),
+            min_trades=50,
+        )
+
+        scan_thresholds = [entry['threshold'] for entry in results['threshold_scan']]
+        assert 0.65 not in scan_thresholds, "threshold with 0 trades must be filtered"
+        assert results['optimal_threshold'] == 0.50

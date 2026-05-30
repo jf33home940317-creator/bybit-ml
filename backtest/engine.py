@@ -96,3 +96,78 @@ def compute_trade_pnl(
         'pnl':          pnl_arr,
         'outcome':      outcome_arr,
     })
+
+
+def run_threshold_scan(
+    df: pd.DataFrame,
+    feature_cols: list,
+    fold_models: list,
+    target: str,
+    thresholds: np.ndarray = None,
+    fee: float = 0.002,
+    min_trades: int = 20,
+) -> dict:
+    """Scan signal thresholds and return metrics + optimal threshold by Sharpe.
+
+    Returns dict with keys:
+        threshold_scan      - list of metric dicts, one per valid threshold
+        optimal_threshold   - threshold with highest Sharpe (>= min_trades)
+        optimal_metrics     - metrics dict for optimal_threshold
+        optimal_trades_df   - trades DataFrame for optimal_threshold (for equity curve)
+        total_years         - float, used in Sharpe normalisation
+    """
+    if thresholds is None:
+        thresholds = np.round(np.arange(0.50, 0.81, 0.01), 2)
+
+    proba = generate_oof_probabilities(df, feature_cols, fold_models)
+    total_years = len(df) / 8760.0
+
+    scan_results = []
+    best_sharpe = -np.inf
+    optimal_threshold = None
+    optimal_trades_df = None
+
+    for thr in thresholds:
+        thr = round(float(thr), 2)
+        signal_indices = np.where(proba >= thr)[0].tolist()
+        if len(signal_indices) < min_trades:
+            continue
+
+        trades_df = compute_trade_pnl(df, signal_indices, target, fee)
+        if len(trades_df) < min_trades:
+            continue
+
+        pnl_vals = trades_df['pnl'].values
+        n_trades = len(pnl_vals)
+        mean_pnl = float(pnl_vals.mean())
+        std_pnl  = float(pnl_vals.std())
+        sharpe   = float(mean_pnl / std_pnl * np.sqrt(n_trades / total_years)) if std_pnl > 0 else 0.0
+
+        cumsum      = np.cumsum(pnl_vals)
+        running_max = np.maximum.accumulate(cumsum)
+        max_dd      = float((cumsum - running_max).min())
+
+        metrics = {
+            'threshold':        thr,
+            'n_trades':         n_trades,
+            'win_rate':         round(float((pnl_vals > 0).sum() / n_trades), 4),
+            'total_return_pct': round(float(pnl_vals.sum()), 6),
+            'avg_return_pct':   round(mean_pnl, 6),
+            'sharpe_ratio':     round(sharpe, 4),
+            'max_drawdown_pct': round(max_dd, 6),
+            'avg_holding_bars': round(float(trades_df['holding_bars'].mean()), 2),
+        }
+        scan_results.append(metrics)
+
+        if sharpe > best_sharpe:
+            best_sharpe       = sharpe
+            optimal_threshold = thr
+            optimal_trades_df = trades_df
+
+    return {
+        'threshold_scan':    scan_results,
+        'optimal_threshold': optimal_threshold,
+        'optimal_metrics':   next((r for r in scan_results if r['threshold'] == optimal_threshold), None),
+        'optimal_trades_df': optimal_trades_df,
+        'total_years':       total_years,
+    }
