@@ -28,7 +28,7 @@ class TestIndicators:
     def test_rsi_columns_exist(self):
         from features.indicators import compute
         df = compute(_make_hourly(), _make_daily())
-        for col in ["rsi_7", "rsi_14", "rsi_50"]:
+        for col in ["rsi_14", "rsi_50"]:
             assert col in df.columns, f"Missing: {col}"
 
     def test_ppo_columns_exist(self):
@@ -58,7 +58,7 @@ class TestIndicators:
     def test_volume_ratio_columns_exist(self):
         from features.indicators import compute
         df = compute(_make_hourly(), _make_daily())
-        for col in ["turnover_ratio_12", "turnover_ratio_24"]:
+        for col in ["turnover_ratio_24"]:
             assert col in df.columns, f"Missing: {col}"
 
     def test_daily_feature_columns_exist(self):
@@ -81,8 +81,8 @@ class TestIndicators:
     def test_rsi_bounded_0_to_100(self):
         """RSI must stay within [0, 100]."""
         from features.indicators import compute
-        df = compute(_make_hourly(), _make_daily()).dropna(subset=["rsi_7", "rsi_14", "rsi_50"])
-        for col in ["rsi_7", "rsi_14", "rsi_50"]:
+        df = compute(_make_hourly(), _make_daily()).dropna(subset=["rsi_14", "rsi_50"])
+        for col in ["rsi_14", "rsi_50"]:
             assert df[col].between(0, 100).all(), f"{col} out of [0, 100]"
 
     def test_bband_width_is_non_negative(self):
@@ -91,3 +91,54 @@ class TestIndicators:
         df = compute(_make_hourly(), _make_daily()).dropna(subset=["bband_width_20", "bband_width_50"])
         assert (df["bband_width_20"] >= 0).all()
         assert (df["bband_width_50"] >= 0).all()
+
+    def test_natr_columns_exist(self):
+        from features.indicators import compute
+        df = compute(_make_hourly(), _make_daily())
+        for col in ["natr_14", "natr_72", "daily_natr_14"]:
+            assert col in df.columns, f"Missing: {col}"
+
+    def test_natr_is_positive(self):
+        from features.indicators import compute
+        df = compute(_make_hourly(), _make_daily()).dropna(subset=["natr_14", "natr_72"])
+        assert (df["natr_14"] > 0).all()
+        assert (df["natr_72"] > 0).all()
+
+    def test_roc_columns_exist(self):
+        from features.indicators import compute
+        df = compute(_make_hourly(), _make_daily())
+        for col in ["roc_4", "roc_12", "roc_24"]:
+            assert col in df.columns, f"Missing: {col}"
+
+    def test_time_feature_columns_exist(self):
+        from features.indicators import compute
+        df = compute(_make_hourly(), _make_daily())
+        for col in ["hour_sin", "hour_cos", "dow_sin", "dow_cos", "is_weekend"]:
+            assert col in df.columns, f"Missing: {col}"
+
+    def test_time_features_bounded(self):
+        """sin/cos 值應在 [-1, 1]，is_weekend 應為 0 或 1"""
+        from features.indicators import compute
+        df = compute(_make_hourly(), _make_daily())
+        for col in ["hour_sin", "hour_cos", "dow_sin", "dow_cos"]:
+            assert df[col].between(-1.0, 1.0).all(), f"{col} out of [-1, 1]"
+        assert df["is_weekend"].isin([0, 1]).all()
+
+    def test_cross_asset_columns_with_ref_df(self):
+        """提供 ref_df 時，應產生 cross_ratio 與 cross_roc_24"""
+        from features.indicators import compute
+        hourly = _make_hourly()
+        ref_df = hourly[["timestamp", "close"]].copy().rename(columns={"close": "ref_close"})
+        df = compute(hourly, _make_daily(), ref_df=ref_df)
+        assert "cross_ratio" in df.columns
+        assert "cross_roc_24" in df.columns
+        # cross_ratio 應約等於 1（同一份 close 資料）
+        valid = df["cross_ratio"].dropna()
+        assert (valid > 0).all()
+
+    def test_cross_asset_absent_without_ref_df(self):
+        """不提供 ref_df 時，不應有 cross_ratio 與 cross_roc_24"""
+        from features.indicators import compute
+        df = compute(_make_hourly(), _make_daily())
+        assert "cross_ratio" not in df.columns
+        assert "cross_roc_24" not in df.columns
