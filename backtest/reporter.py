@@ -8,6 +8,15 @@ import numpy as np
 import pandas as pd
 
 
+class _NumpyEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        return super().default(obj)
+
+
 def save_threshold_scan(
     results: dict,
     symbol: str,
@@ -30,7 +39,7 @@ def save_threshold_scan(
 
     path = output_dir / f"{symbol}_{target}_threshold_scan.json"
     with open(path, 'w', encoding='utf-8') as f:
-        json.dump(out, f, indent=2)
+        json.dump(out, f, indent=2, cls=_NumpyEncoder)
 
 
 def save_threshold_tradeoff_chart(
