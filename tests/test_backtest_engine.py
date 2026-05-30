@@ -107,6 +107,21 @@ class TestComputeTradePnl:
         assert abs(row['pnl'] - (0.01 - 0.002)) < 1e-9
         assert row['holding_bars'] == 24
 
+    def test_pnl_sl_wins_on_tie(self):
+        """When TP and SL both trigger on the same bar, SL wins."""
+        df = _make_df(100, close=1000.0)
+        # Bar 1: high=1025 (≥ TP 1020) AND low=985 (≤ SL 990) — simultaneous hit
+        df.loc[1, 'high'] = 1025.0
+        df.loc[1, 'low']  = 985.0
+
+        trades = compute_trade_pnl(df, signal_indices=[0], target='target_fixed')
+
+        assert len(trades) == 1
+        row = trades.iloc[0]
+        assert row['outcome'] == 'sl', "SL must win when both TP and SL trigger on the same bar"
+        assert abs(row['pnl'] - (-0.01 - 0.002)) < 1e-9
+        assert row['holding_bars'] == 1
+
 
 class TestRunThresholdScan:
 

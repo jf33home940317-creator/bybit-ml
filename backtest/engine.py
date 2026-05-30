@@ -7,8 +7,11 @@ def generate_oof_probabilities(
     df: pd.DataFrame,
     feature_cols: list,
     fold_models: list,
+    n_folds: int = 5,
 ) -> pd.Series:
     """Generate out-of-fold probabilities; training rows remain NaN."""
+    if len(fold_models) != n_folds:
+        raise ValueError(f"Expected {n_folds} fold models, got {len(fold_models)}")
     proba = pd.Series(np.nan, index=df.index, dtype=float)
     for (_, val_idx), model in zip(purged_walk_forward_split(len(df)), fold_models):
         X_val = df.iloc[val_idx][feature_cols]

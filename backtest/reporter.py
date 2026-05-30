@@ -10,6 +10,8 @@ import pandas as pd
 
 class _NumpyEncoder(json.JSONEncoder):
     def default(self, obj):
+        if isinstance(obj, np.bool_):
+            return bool(obj)
         if isinstance(obj, np.integer):
             return int(obj)
         if isinstance(obj, np.floating):
