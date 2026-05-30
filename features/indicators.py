@@ -1,4 +1,5 @@
 # features/indicators.py
+import numpy as np
 import pandas as pd
 import pandas_ta as ta
 
@@ -13,14 +14,14 @@ def _find_ppo_col(ppo_df: "pd.DataFrame", prefix: str) -> str:
     return matches[0]
 
 
-def compute(hourly_df: pd.DataFrame, daily_df: pd.DataFrame) -> pd.DataFrame:
+def compute(hourly_df: pd.DataFrame, daily_df: pd.DataFrame, ref_df: pd.DataFrame = None) -> pd.DataFrame:
     df = hourly_df.copy()
 
-    # RSI: [7, 14, 50] — 短/標準/中長，拉開級距避免 rsi_14↔rsi_24 高共線性
-    for period in [7, 14, 50]:
+    # 1. RSI: only 14 and 50 (rsi_7 removed)
+    for period in [14, 50]:
         df[f"rsi_{period}"] = ta.rsi(df["close"], length=period)
 
-    # PPO replaces MACD — output is percentage-based, no absolute-value trap
+    # 2. PPO replaces MACD — output is percentage-based, no absolute-value trap
     # pandas-ta column order varies by version; use prefix matching for safety
     ppo = ta.ppo(df["close"], fast=12, slow=26, signal=9)
     ppo_col      = _find_ppo_col(ppo, "PPO_")
@@ -30,11 +31,15 @@ def compute(hourly_df: pd.DataFrame, daily_df: pd.DataFrame) -> pd.DataFrame:
     df["ppo_signal"] = ppo[ppo_sig_col]
     df["ppo_hist"]   = ppo[ppo_hist_col]
 
-    # ATR: [14, 72] — 短期(14h)/中期(72h=3天)，拉開級距避免 atr_14↔atr_24 高共線性
+    # 3. ATR: [14, 72] — kept for labels.py usage
     for period in [14, 72]:
         df[f"atr_{period}"] = ta.atr(df["high"], df["low"], df["close"], length=period)
 
-    # Bollinger Band width = (upper - lower) / middle
+    # 4. Normalised ATR (immediately after raw ATR)
+    df["natr_14"] = df["atr_14"] / df["close"]
+    df["natr_72"] = df["atr_72"] / df["close"]
+
+    # 5. Bollinger Band width = (upper - lower) / middle
     # pandas-ta bbands columns order: BBL, BBM, BBU, BBB, BBP
     for length, std_val in [(20, 2.0), (50, 2.5)]:
         bb = ta.bbands(df["close"], length=length, lower_std=std_val, upper_std=std_val)
@@ -44,17 +49,43 @@ def compute(hourly_df: pd.DataFrame, daily_df: pd.DataFrame) -> pd.DataFrame:
         lower, middle, upper = bb[bbl_col], bb[bbm_col], bb[bbu_col]
         df[f"bband_width_{length}"] = (upper - lower) / middle
 
-    # MA Bias = (close - SMA_N) / SMA_N
+    # 6. MA Bias = (close - SMA_N) / SMA_N
     for period in [20, 50, 200]:
         sma = ta.sma(df["close"], length=period)
         df[f"ma_bias_{period}"] = (df["close"] - sma) / sma
 
-    # Turnover ratio only — vol_ratio 與 turnover_ratio r=1.00 完全重複，turnover 含價格權重更能反映資金力道
-    for period in [12, 24]:
-        df[f"turnover_ratio_{period}"] = df["turnover"] / df["turnover"].rolling(period).mean()
+    # 7. Turnover ratio — only period 24 (turnover_ratio_12 removed)
+    df["turnover_ratio_24"] = df["turnover"] / df["turnover"].rolling(24).mean()
 
-    # Daily indicators — computed independently, then merged with look-ahead prevention
+    # 8. ROC (Rate of Change)
+    df["roc_4"]  = df["close"].pct_change(4)
+    df["roc_12"] = df["close"].pct_change(12)
+    df["roc_24"] = df["close"].pct_change(24)
+
+    # 9. Time-cycle features (extracted from timestamp)
+    hour = df["timestamp"].dt.hour
+    dow  = df["timestamp"].dt.dayofweek  # 0=Monday, 5=Saturday, 6=Sunday
+
+    df["hour_sin"]   = np.sin(2 * np.pi * hour / 24)
+    df["hour_cos"]   = np.cos(2 * np.pi * hour / 24)
+    df["dow_sin"]    = np.sin(2 * np.pi * dow / 7)
+    df["dow_cos"]    = np.cos(2 * np.pi * dow / 7)
+    df["is_weekend"] = dow.isin([5, 6]).astype(int)
+
+    # 10. Daily indicators — computed independently, then merged with look-ahead prevention
     df = _attach_daily_features(df, daily_df)
+
+    # 11. daily_natr_14 — computed after _attach_daily_features() so daily_atr_14 exists
+    df["daily_natr_14"] = df["daily_atr_14"] / df["close"]
+
+    # 12. Cross-asset features (only when ref_df is provided)
+    if ref_df is not None:
+        # ref_df columns: ["timestamp", "ref_close"], timestamp aligned with hourly_df
+        df = pd.merge(df, ref_df[["timestamp", "ref_close"]], on="timestamp", how="left")
+        df["cross_ratio"]  = df["close"] / df["ref_close"]
+        df["cross_roc_24"] = df["ref_close"].pct_change(24)
+        df = df.drop(columns=["ref_close"])
+
     return df
 
 
