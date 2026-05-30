@@ -19,14 +19,14 @@ def train_fold(
 
     model = XGBClassifier(
         objective="binary:logistic",
-        n_estimators=500,
-        learning_rate=0.05,
+        n_estimators=2000,
+        learning_rate=0.01,
         max_depth=4,
         subsample=0.8,
         colsample_bytree=0.8,
         scale_pos_weight=scale_pos_weight,
         eval_metric="logloss",
-        early_stopping_rounds=50,
+        early_stopping_rounds=100,
         random_state=42,
     )
 
@@ -60,7 +60,7 @@ def train_final(
     model = XGBClassifier(
         objective="binary:logistic",
         n_estimators=n_estimators,
-        learning_rate=0.05,
+        learning_rate=0.01,
         max_depth=4,
         subsample=0.8,
         colsample_bytree=0.8,

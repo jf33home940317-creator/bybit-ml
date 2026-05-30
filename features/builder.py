@@ -48,6 +48,10 @@ def build(
     # 3. Compute technical indicators — produces head NaNs; also adds atr_14 needed by labels
     df = indicators.compute(df, daily_df, ref_df=ref_df)
 
+    # 3.1 ETH: drop cross_ratio (ETH/BTC is self-referential noise; keep cross_roc_24 as pure BTC momentum)
+    if symbol == "ETHUSDT" and "cross_ratio" in df.columns:
+        df = df.drop(columns=["cross_ratio"])
+
     # 4. Compute triple barrier labels — produces tail NaNs for last HORIZON rows
     df = labels.compute(df)
 
