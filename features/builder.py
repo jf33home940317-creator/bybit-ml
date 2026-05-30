@@ -15,6 +15,7 @@ def build(
     symbol: str,
     raw_dir: Path = None,
     features_dir: Path = None,
+    all_hourly: dict = None,
 ) -> None:
     raw_dir      = Path(raw_dir)      if raw_dir      is not None else config.STORAGE_RAW
     features_dir = Path(features_dir) if features_dir is not None else config.STORAGE_FEATURES
@@ -34,8 +35,18 @@ def build(
     # 2. Dual-timeframe alignment (Phase 1 function, prevents look-ahead bias)
     df = cleaner.align_daily_to_hourly(hourly_df, daily_df)
 
+    # 2.5. Determine reference dataframe for cross-asset features
+    ref_df = None
+    if all_hourly:
+        all_symbols = config.SYMBOLS
+        other_symbols = [s for s in all_symbols if s != symbol]
+        if other_symbols:
+            ref_symbol = other_symbols[0]
+            ref_raw = all_hourly[ref_symbol]
+            ref_df = ref_raw[["timestamp", "close"]].rename(columns={"close": "ref_close"})
+
     # 3. Compute technical indicators — produces head NaNs; also adds atr_14 needed by labels
-    df = indicators.compute(df, daily_df)
+    df = indicators.compute(df, daily_df, ref_df=ref_df)
 
     # 4. Compute triple barrier labels — produces tail NaNs for last HORIZON rows
     df = labels.compute(df)
