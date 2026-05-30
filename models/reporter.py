@@ -78,8 +78,8 @@ def save_feature_importance_chart(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Sort by importance in descending order (highest first)
-    sorted_items = sorted(feature_importance.items(), key=lambda x: x[1], reverse=True)
+    # Sort ascending so barh renders highest importance at the top (barh draws bottom-up)
+    sorted_items = sorted(feature_importance.items(), key=lambda x: x[1])
     features = [item[0] for item in sorted_items]
     importances = [item[1] for item in sorted_items]
 
