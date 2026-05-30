@@ -117,7 +117,7 @@ def run_threshold_scan(
         total_years         - float, used in Sharpe normalisation
     """
     if thresholds is None:
-        thresholds = np.round(np.arange(0.50, 0.81, 0.01), 2)
+        thresholds = np.round(np.linspace(0.50, 0.80, 31), 2)
 
     proba = generate_oof_probabilities(df, feature_cols, fold_models)
     total_years = len(df) / 8760.0
