@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from backtest.engine import generate_oof_probabilities
+from backtest.engine import compute_trade_pnl
 from models.splitter import purged_walk_forward_split
 
 
@@ -54,3 +55,53 @@ class TestGenerateOofProbabilities:
 
         expected = sum(len(v) for _, v in purged_walk_forward_split(n))
         assert proba.notna().sum() == expected  # 5 × 76 = 380 for n=600
+
+
+class TestComputeTradePnl:
+
+    def test_pnl_tp_hit(self):
+        """TP hit before SL: pnl = +2% − fee."""
+        df = _make_df(100, close=1000.0)
+        # Bar 1: high=1025 (≥ TP 1020), low=995 (> SL 990) → TP first
+        df.loc[1, 'high'] = 1025.0
+        df.loc[1, 'low']  = 995.0
+
+        trades = compute_trade_pnl(df, signal_indices=[0], target='target_fixed')
+
+        assert len(trades) == 1
+        row = trades.iloc[0]
+        assert row['outcome'] == 'tp'
+        assert abs(row['pnl'] - (0.02 - 0.002)) < 1e-9
+        assert row['holding_bars'] == 1
+
+    def test_pnl_sl_hit(self):
+        """SL hit before TP: pnl = −1% − fee."""
+        df = _make_df(100, close=1000.0)
+        # Bar 1: high=1010 (< TP 1020), low=985 (≤ SL 990) → SL first
+        df.loc[1, 'high'] = 1010.0
+        df.loc[1, 'low']  = 985.0
+
+        trades = compute_trade_pnl(df, signal_indices=[0], target='target_fixed')
+
+        assert len(trades) == 1
+        row = trades.iloc[0]
+        assert row['outcome'] == 'sl'
+        assert abs(row['pnl'] - (-0.01 - 0.002)) < 1e-9
+        assert row['holding_bars'] == 1
+
+    def test_pnl_timeout(self):
+        """Neither TP nor SL hit in 24 bars: exit at close[t+24]."""
+        df = _make_df(100, close=1000.0)
+        # All highs < TP (1020), all lows > SL (990)
+        df['high'] = 1005.0
+        df['low']  = 995.0
+        # close[24] = 1010 → timeout pnl = +1% − fee
+        df.loc[24, 'close'] = 1010.0
+
+        trades = compute_trade_pnl(df, signal_indices=[0], target='target_fixed')
+
+        assert len(trades) == 1
+        row = trades.iloc[0]
+        assert row['outcome'] == 'timeout'
+        assert abs(row['pnl'] - (0.01 - 0.002)) < 1e-9
+        assert row['holding_bars'] == 24
