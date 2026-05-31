@@ -11,12 +11,66 @@ from live import fetcher, pipeline, state, ledger, notifier
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
-MAX_CONCURRENT = 3
-HOLDING_BARS   = 24       # 24 小時後 timeout
-RISK_PCT       = 0.02
-INITIAL_EQUITY = 1_000_000
-
 _threshold_cache: dict = {}
+
+
+# ─── Pure helpers (unit-tested in tests/test_run_live_helpers.py) ────────────
+
+def _realized_pnl_pct(entry: float, exit_price: float) -> float:
+    """Return P&L percent after deducting the round-trip fee (matches backtest)."""
+    raw = (exit_price - entry) / entry * 100
+    return round(raw - config.FEE_PCT, 4)
+
+
+def _build_daily_summary(records: list, current_state: dict, now: pd.Timestamp) -> str:
+    """24h activity summary used by the daily health heartbeat."""
+    cutoff = now - pd.Timedelta(hours=24)
+
+    def _within(ts_str: str) -> bool:
+        if not ts_str:
+            return False
+        ts = pd.Timestamp(ts_str)
+        if ts.tzinfo is None:
+            ts = ts.tz_localize("UTC")
+        return ts >= cutoff
+
+    recent_signals = [r for r in records if r.get("status") == "open" and _within(r.get("entry_time"))]
+    recent_closes  = [r for r in records if "outcome" in r and _within(r.get("exit_time_actual"))]
+
+    wins   = sum(1 for r in recent_closes if r.get("outcome") == "win")
+    losses = sum(1 for r in recent_closes if r.get("outcome") == "loss")
+
+    pnl_usd_sum = sum(
+        r["position_usd"] * r["pnl_pct"] / 100
+        for r in recent_closes
+        if r.get("pnl_pct") is not None and r.get("position_usd") is not None
+    )
+
+    return (
+        f"[BYBIT_ML] 📊 **24h 健康心跳**\n"
+        f"過去 24h 訊號: {len(recent_signals)} 筆\n"
+        f"已結算: {wins} 贏 / {losses} 輸\n"
+        f"24h 損益: ${pnl_usd_sum:+,.0f} USD\n"
+        f"當前持倉: {len(current_state['positions'])} 筆"
+    )
+
+
+class _ErrorThrottle:
+    """Rate-limit identical error alerts to one per cooldown window."""
+
+    def __init__(self, cooldown_hours: float = 6.0) -> None:
+        self._last_alert: dict = {}
+        self._cooldown = pd.Timedelta(hours=cooldown_hours)
+
+    def should_alert(self, key: str, now: pd.Timestamp) -> bool:
+        last = self._last_alert.get(key)
+        if last is None or now - last >= self._cooldown:
+            self._last_alert[key] = now
+            return True
+        return False
+
+
+_error_throttle = _ErrorThrottle(cooldown_hours=6)
 
 
 def _load_threshold(symbol: str, target: str) -> float:
@@ -28,9 +82,77 @@ def _load_threshold(symbol: str, target: str) -> float:
     return _threshold_cache[key]
 
 
+def _compute_current_equity() -> float:
+    """Return compound equity = INITIAL_EQUITY + sum of all closed-trade USD P&L."""
+    records = ledger.load_ledger()
+    closes = [
+        r for r in records
+        if "outcome" in r
+        and r.get("pnl_pct") is not None
+        and r.get("position_usd") is not None
+    ]
+    total_pnl = sum(r["position_usd"] * r["pnl_pct"] / 100 for r in closes)
+    return config.INITIAL_EQUITY + total_pnl
+
+
 def _sl_tp(close: float, atr_14: float) -> tuple:
-    """target_atr: SL = close − 1.5×ATR, TP = close + 2.0×ATR"""
-    return close - 1.5 * atr_14, close + 2.0 * atr_14
+    """target_atr: SL = close − 1.5×ATR, TP = close + 3.0×ATR (matches labels.py ATR_TP_MULT)"""
+    return close - 1.5 * atr_14, close + 3.0 * atr_14
+
+
+def _check_barriers(positions: list, now: pd.Timestamp) -> tuple[list, list]:
+    """Check open positions for SL/TP hits on the latest candle.
+
+    Returns (remaining_positions, hit_list).
+    hit_list entries: (pos, outcome, exit_price)
+    SL wins ties — consistent with labels.py barrier logic.
+    """
+    hit = []
+    remaining = []
+
+    symbol_candles: dict = {}
+    for pos in positions:
+        sym = pos["symbol"]
+        if sym not in symbol_candles:
+            try:
+                df = fetcher.fetch_latest(sym, "60", 2)
+                if len(df) < 2:
+                    symbol_candles[sym] = None
+                else:
+                    # iloc[-1] is the currently forming candle (only seconds/minutes of data)
+                    # iloc[-2] is the last fully closed candle — use this for accurate high/low
+                    symbol_candles[sym] = df.iloc[-2]
+            except Exception as e:
+                logger.warning(f"[{sym}] Could not fetch candle for barrier check: {e}")
+                symbol_candles[sym] = None
+
+    for pos in positions:
+        candle = symbol_candles.get(pos["symbol"])
+        if candle is None:
+            remaining.append(pos)
+            continue
+
+        high = float(candle["high"])
+        low  = float(candle["low"])
+        tp   = pos["tp_price"]
+        sl   = pos["sl_price"]
+
+        tp_hit = high >= tp
+        sl_hit = low  <= sl
+
+        if sl_hit or tp_hit:
+            # SL wins ties (same-bar collision)
+            if sl_hit:
+                outcome    = "loss"
+                exit_price = sl
+            else:
+                outcome    = "win"
+                exit_price = tp
+            hit.append((pos, outcome, exit_price))
+        else:
+            remaining.append(pos)
+
+    return remaining, hit
 
 
 def heartbeat() -> None:
@@ -39,34 +161,66 @@ def heartbeat() -> None:
 
     current_state = state.load_state()
 
-    # ── 1. 到期平倉 ──────────────────────────────────────────────────
+    # ── 0. SL/TP 障礙觸發平倉(路徑相依,每小時檢查)──────────────────
+    remaining, barrier_hits = _check_barriers(current_state["positions"], now)
+    current_state = {"positions": remaining}
+    for pos, outcome, exit_price in barrier_hits:
+        pnl_pct = _realized_pnl_pct(pos["entry_price"], exit_price)
+        pnl_usd = round(pos["position_usd"] * pnl_pct / 100, 2)
+        ledger.append_entry({
+            **pos,
+            "outcome":          outcome,
+            "exit_price":       exit_price,
+            "pnl_pct":          pnl_pct,
+            "pnl_usd":          pnl_usd,
+            "exit_time_actual": now.isoformat(),
+        })
+        if outcome == "win":
+            tag = "🎯 止盈出場"
+            pnl_label = f"獲利:+${pnl_usd:,.0f} USD"
+        else:
+            tag = "🛡️ 止損保護"
+            pnl_label = f"虧損:-${abs(pnl_usd):,.0f} USD"
+        notifier.send(
+            f"[BYBIT_ML] **{pos['symbol']} {tag}**\n"
+            f"進場:{pos['entry_price']:.4f} @ {pos['entry_time']}\n"
+            f"出場:{exit_price:.4f}  ({pnl_pct:+.4f}%)\n"
+            f"{pnl_label}"
+        )
+        logger.info(f"Barrier closed: {pos['symbol']} outcome={outcome} exit={exit_price} pnl={pnl_pct:+.4f}% ({pnl_usd:+,.0f} USD)")
+
+    # ── 1. 到期平倉(24h timeout,SL/TP 皆未觸發)────────────────────
     current_state, expired = state.expire_closed_positions(current_state, now)
     for pos in expired:
         exit_price = None
         try:
-            exit_df = fetcher.fetch_latest(pos["symbol"], "60", 1)
-            exit_price = float(exit_df["close"].iloc[-1])
+            exit_df = fetcher.fetch_latest(pos["symbol"], "60", 2)
+            # use last fully closed bar — iloc[-1] is the still-forming candle
+            exit_price = float(exit_df["close"].iloc[-2])
         except Exception as e:
             logger.warning(f"[{pos['symbol']}] Could not fetch exit price: {e}")
 
         pnl_pct = None
+        pnl_usd = None
         outcome = "timeout"
         if exit_price is not None:
-            pnl_pct  = round((exit_price - pos["entry_price"]) / pos["entry_price"] * 100, 4)
-            outcome  = "win" if exit_price > pos["entry_price"] else "loss"
+            pnl_pct  = _realized_pnl_pct(pos["entry_price"], exit_price)
+            pnl_usd  = round(pos["position_usd"] * pnl_pct / 100, 2)
+            outcome  = "win" if pnl_pct > 0 else "loss"
 
         ledger.append_entry({
             **pos,
             "outcome":          outcome,
             "exit_price":       exit_price,
             "pnl_pct":          pnl_pct,
+            "pnl_usd":          pnl_usd,
             "exit_time_actual": now.isoformat(),
         })
-        result_line = (f"出場：{exit_price:.4f}  P&L：{pnl_pct:+.4f}%  結果：{'✅ 漲' if outcome == 'win' else '❌ 跌'}"
+        result_line = (f"出場:{exit_price:.4f}  P&L:{pnl_pct:+.4f}%  結果:{'✅ 漲' if outcome == 'win' else '❌ 跌'}"
                        if exit_price is not None else "出場價抓取失敗")
         notifier.send(
             f"[BYBIT_ML] 📋 **{pos['symbol']} 倉位到期**\n"
-            f"進場：{pos['entry_price']:.4f} @ {pos['entry_time']}\n"
+            f"進場:{pos['entry_price']:.4f} @ {pos['entry_time']}\n"
             f"{result_line}"
         )
         logger.info(f"Expired: {pos['symbol']} entry={pos['entry_price']} exit={exit_price} outcome={outcome}")
@@ -74,8 +228,8 @@ def heartbeat() -> None:
     # ── 2. 檢查訊號 ──────────────────────────────────────────────────
     for symbol in config.LIVE_SYMBOLS:
         n_active = state.count_active(current_state)
-        if n_active >= MAX_CONCURRENT:
-            logger.info(f"[{symbol}] Concurrent limit ({n_active}/{MAX_CONCURRENT}), skip")
+        if n_active >= config.MAX_CONCURRENT:
+            logger.info(f"[{symbol}] Concurrent limit ({n_active}/{config.MAX_CONCURRENT}), skip")
             continue
 
         target    = config.LIVE_TARGET
@@ -86,6 +240,12 @@ def heartbeat() -> None:
             result = pipeline.compute_signal(symbol, feature_cols, fold_models, threshold)
         except Exception as e:
             logger.error(f"[{symbol}] Signal failed: {e}")
+            if _error_throttle.should_alert(f"{symbol}_signal", now):
+                notifier.send(
+                    f"[BYBIT_ML] ⚠️ **{symbol} 訊號計算錯誤**\n"
+                    f"{type(e).__name__}: {e}\n"
+                    f"(同一錯誤 6h 內僅推播一次)"
+                )
             continue
 
         logger.info(f"[{symbol}] prob={result['probability']:.4f} signal={result['signal']}")
@@ -98,12 +258,13 @@ def heartbeat() -> None:
         if sl_dist <= 0:
             logger.warning(f"[{symbol}] Skipping signal: sl_dist={sl_dist:.6f} (atr_14={result['atr_14']:.6f})")
             continue
-        pos_qty   = (INITIAL_EQUITY * RISK_PCT) / sl_dist
-        pos_usd   = pos_qty * result["close"]
+        current_equity = _compute_current_equity()
+        pos_qty        = (current_equity * config.RISK_PCT) / sl_dist
+        pos_usd        = pos_qty * result["close"]
         ts        = pd.Timestamp(result["timestamp"])
         if ts.tzinfo is None:
             ts = ts.tz_localize("UTC")
-        exit_time = (ts + pd.Timedelta(hours=HOLDING_BARS)).isoformat()
+        exit_time = (ts + pd.Timedelta(hours=config.HOLDING_BARS)).isoformat()
 
         position = {
             "symbol":       symbol,
@@ -122,15 +283,26 @@ def heartbeat() -> None:
         ledger.append_entry({**position, "status": "open"})
         notifier.send(
             f"[BYBIT_ML] 🚀 **{symbol} 買入訊號**\n"
-            f"機率：{result['probability']:.4f} > {threshold}\n"
-            f"進場價：{result['close']:,.4f}\n"
-            f"SL：{sl:,.4f}  |  TP：{tp:,.4f}\n"
-            f"虛擬部位：${pos_usd:,.0f} USD\n"
-            f"預計出場：{exit_time}"
+            f"機率:{result['probability']:.4f} > {threshold}\n"
+            f"進場價:{result['close']:,.4f}\n"
+            f"SL:{sl:,.4f}  |  TP:{tp:,.4f}\n"
+            f"帳戶淨值:${current_equity:,.0f} USD\n"
+            f"虛擬部位:${pos_usd:,.0f} USD\n"
+            f"預計出場:{exit_time}"
         )
         logger.info(f"[{symbol}] Signal! prob={result['probability']:.4f}, pos=${pos_usd:,.0f}")
 
     state.save_state(current_state)
+
+    # ── 3. 每日健康心跳(每天 UTC 00:01 的 heartbeat 跑這段)─────────
+    if now.hour == 0:
+        try:
+            records = ledger.load_ledger()
+            notifier.send(_build_daily_summary(records, current_state, now))
+            logger.info("[heartbeat] Daily summary sent")
+        except Exception as e:
+            logger.error(f"Daily summary failed: {e}")
+
     logger.info("[heartbeat] Done")
 
 

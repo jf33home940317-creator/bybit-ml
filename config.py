@@ -35,6 +35,14 @@ DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
 LIVE_TARGET  = "target_atr"       # must match model training label
 LIVE_SYMBOLS = ["ETHUSDT"]        # BTCUSDT excluded (negative Sharpe in Phase 4.2)
 
+# Live execution constants — shared by run_live.py and show_results.py so the
+# displayed simulation matches what the daemon actually does.
+INITIAL_EQUITY = 1_000_000.0
+RISK_PCT       = 0.02
+HOLDING_BARS   = 24       # 24h timeout if SL/TP not hit
+MAX_CONCURRENT = 3
+FEE_PCT        = 0.2      # 0.2% round-trip, matches backtest fee=0.002
+
 OVERLAP_HOURS = 3   # overlap candles re-fetched to overwrite unclosed candles from previous run
 OVERLAP_DAYS = 3
 RATE_LIMIT_SLEEP = 0.2

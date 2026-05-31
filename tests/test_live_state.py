@@ -87,3 +87,34 @@ class TestLedger:
         from live.ledger import load_ledger
         records = load_ledger(ledger_file=tmp_path / "nonexistent.json")
         assert records == []
+
+    def test_existing_ledger_preserved_when_write_fails(self, tmp_path, monkeypatch):
+        """Crash-safety: if json.dump raises mid-write, the previously-persisted
+        ledger contents must remain intact (not truncated or corrupt)."""
+        import json as _json
+        from live import ledger
+        lf = tmp_path / "ledger.json"
+        # Pre-write a known-good ledger
+        ledger.append_entry({"id": "first"}, ledger_file=lf)
+        ledger.append_entry({"id": "second"}, ledger_file=lf)
+
+        # Force the next dump to raise
+        def _boom(*args, **kwargs):
+            raise OSError("simulated disk failure")
+        monkeypatch.setattr(ledger.json, "dump", _boom)
+
+        with pytest.raises(OSError):
+            ledger.append_entry({"id": "third"}, ledger_file=lf)
+
+        # Original file must still be readable with original contents
+        with open(lf, encoding="utf-8") as fp:
+            recovered = _json.load(fp)
+        assert recovered == [{"id": "first"}, {"id": "second"}]
+
+    def test_no_tmp_files_left_after_successful_write(self, tmp_path):
+        from live import ledger
+        lf = tmp_path / "ledger.json"
+        ledger.append_entry({"id": 1}, ledger_file=lf)
+        ledger.append_entry({"id": 2}, ledger_file=lf)
+        leftover = list(tmp_path.glob("*.tmp"))
+        assert leftover == [], f"Temp files not cleaned up: {leftover}"
