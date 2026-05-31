@@ -60,6 +60,7 @@ class TestCountAndAdd:
         new_s = add_position(s, pos)
         assert len(new_s["positions"]) == 1
         assert new_s["positions"][0]["entry_price"] == 3000.0
+        assert len(s["positions"]) == 0, "add_position must not mutate the original state"
 
 
 # ─── ledger.py 測試 ───────────────────────────────────────────────────────────
