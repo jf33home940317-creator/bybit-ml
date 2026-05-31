@@ -59,9 +59,9 @@ def heartbeat() -> None:
 
         target    = config.LIVE_TARGET
         threshold = _load_threshold(symbol, target)
-        feature_cols, fold_models = pipeline.load_assets(symbol, target)
 
         try:
+            feature_cols, fold_models = pipeline.load_assets(symbol, target)
             result = pipeline.compute_signal(symbol, feature_cols, fold_models, threshold)
         except Exception as e:
             logger.error(f"[{symbol}] Signal failed: {e}")
@@ -72,11 +72,17 @@ def heartbeat() -> None:
         if not result["signal"]:
             continue
 
-        sl, tp     = _sl_tp(result["close"], result["atr_14"])
-        sl_dist    = result["close"] - sl
-        pos_qty    = (INITIAL_EQUITY * RISK_PCT) / sl_dist if sl_dist > 0 else 0
-        pos_usd    = pos_qty * result["close"]
-        exit_time  = (pd.Timestamp(result["timestamp"]) + pd.Timedelta(hours=HOLDING_BARS)).isoformat()
+        sl, tp  = _sl_tp(result["close"], result["atr_14"])
+        sl_dist = result["close"] - sl
+        if sl_dist <= 0:
+            logger.warning(f"[{symbol}] Skipping signal: sl_dist={sl_dist:.6f} (atr_14={result['atr_14']:.6f})")
+            continue
+        pos_qty   = (INITIAL_EQUITY * RISK_PCT) / sl_dist
+        pos_usd   = pos_qty * result["close"]
+        ts        = pd.Timestamp(result["timestamp"])
+        if ts.tzinfo is None:
+            ts = ts.tz_localize("UTC")
+        exit_time = (ts + pd.Timedelta(hours=HOLDING_BARS)).isoformat()
 
         position = {
             "symbol":       symbol,
@@ -108,6 +114,8 @@ def heartbeat() -> None:
 
 
 def main() -> None:
+    if not config.DISCORD_WEBHOOK_URL:
+        logger.warning("DISCORD_WEBHOOK_URL not set — Discord notifications disabled")
     logger.info("Live signal daemon starting — running once immediately...")
     heartbeat()
     schedule.every().hour.at(":01").do(heartbeat)
