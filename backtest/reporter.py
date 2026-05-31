@@ -130,3 +130,107 @@ def save_equity_curve(
     path = output_dir / f"{symbol}_{target}_optimal_equity.png"
     plt.savefig(path, dpi=150)
     plt.close()
+
+
+def save_portfolio_report(
+    results: dict,
+    symbol: str,
+    target: str,
+    output_dir: Path,
+) -> None:
+    """Write portfolio_report.json for the given symbol/target combination."""
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    out = {
+        'symbol':            symbol,
+        'target':            target,
+        'initial_equity':    results['initial_equity'],
+        'final_equity':      results['final_equity'],
+        'risk_pct':          results['risk_pct'],
+        'max_concurrent':    results['max_concurrent'],
+        'optimal_threshold': results['optimal_threshold'],
+        'total_signals':     results['total_signals'],
+        'executed_trades':   results['executed_trades'],
+        'skipped_signals':   results['skipped_signals'],
+        'metrics':           results['metrics'],
+    }
+
+    path = output_dir / f"{symbol}_{target}_portfolio_report.json"
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(out, f, indent=2, cls=_NumpyEncoder)
+
+
+def save_portfolio_equity_curve(
+    results: dict,
+    symbol: str,
+    target: str,
+    output_dir: Path,
+) -> None:
+    """雙子圖 PNG：上圖 USD 資金曲線（含 MDD 陰影），下圖 Drawdown % 瀑布圖。"""
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    closed     = results.get('closed_trades', [])
+    equity_log = results.get('equity_log', [])
+    if not equity_log or not closed:
+        return
+
+    metrics        = results.get('metrics', {})
+    initial_equity = results['initial_equity']
+
+    # equity_log 與 closed_trades 一一對應（同順序，長度相等）
+    exit_timestamps = [
+        pd.Timestamp(t['timestamp']) + pd.Timedelta(hours=int(t['exit_bar'] - t['entry_idx']))
+        for t in closed
+    ]
+
+    # 插入起始點（第一筆出場時間 - 1h）
+    t0 = exit_timestamps[0] - pd.Timedelta(hours=1)
+    timestamps    = [t0] + exit_timestamps
+    equities_arr  = np.array([initial_equity] + [e for _, e in equity_log])
+
+    # Drawdown 計算
+    running_peak = np.maximum.accumulate(equities_arr)
+    dd_pct = np.where(running_peak > 0,
+                      (equities_arr - running_peak) / running_peak * 100,
+                      0.0)
+
+    mdd_pct  = metrics.get('max_drawdown_pct', 0.0)
+    sharpe   = metrics.get('sharpe_ratio', 0.0)
+    final_eq = results['final_equity']
+
+    fig, (ax_top, ax_bot) = plt.subplots(
+        2, 1, figsize=(14, 8),
+        gridspec_kw={'height_ratios': [7, 3]},
+        sharex=True,
+    )
+
+    # ── 上圖：USD 資金曲線 ──────────────────────────────────────────
+    ax_top.step(timestamps, equities_arr, where='post', color='steelblue', linewidth=1.5)
+    mdd_mask = equities_arr < running_peak
+    ax_top.fill_between(timestamps, equities_arr, running_peak,
+                        where=mdd_mask, alpha=0.25, color='red', step='post')
+    ax_top.axhline(initial_equity, color='gray', linestyle='--', linewidth=1)
+    ax_top.set_ylabel('Portfolio Equity (USD)')
+    ax_top.set_title(
+        f"{symbol} {target} Portfolio  |  "
+        f"Start: ${initial_equity:,.0f}  →  End: ${final_eq:,.0f}  |  "
+        f"MDD: {mdd_pct:.1f}%  |  Sharpe: {sharpe:.2f}"
+    )
+    ax_top.yaxis.set_major_formatter(lambda x, _: f'${x:,.0f}')
+
+    # ── 下圖：Drawdown % 瀑布圖 ─────────────────────────────────────
+    ax_bot.fill_between(timestamps, dd_pct, 0,
+                        where=(dd_pct <= 0), alpha=0.6, color='red', step='post')
+    ax_bot.step(timestamps, dd_pct, where='post', color='darkred', linewidth=1)
+    ax_bot.axhline(0, color='gray', linestyle='--', linewidth=0.8)
+    ax_bot.set_ylabel('Drawdown (%)')
+    ax_bot.set_xlabel('Exit Timestamp')
+
+    plt.xticks(rotation=30)
+    plt.tight_layout()
+
+    path = output_dir / f"{symbol}_{target}_portfolio_equity.png"
+    plt.savefig(path, dpi=150)
+    plt.close()
