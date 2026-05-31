@@ -25,7 +25,7 @@ class TestExpirePositions:
 
     def test_removes_past_positions(self):
         from live.state import expire_closed_positions
-        now = pd.Timestamp.utcnow()
+        now = pd.Timestamp.now('UTC')
         past   = (now - pd.Timedelta(hours=1)).isoformat()
         future = (now + pd.Timedelta(hours=1)).isoformat()
         s = {"positions": [{"symbol": "A", "exit_time": past},
@@ -38,7 +38,7 @@ class TestExpirePositions:
 
     def test_keeps_all_when_none_expired(self):
         from live.state import expire_closed_positions
-        now    = pd.Timestamp.utcnow()
+        now    = pd.Timestamp.now('UTC')
         future = (now + pd.Timedelta(hours=1)).isoformat()
         s = {"positions": [{"symbol": "A", "exit_time": future}]}
         new_s, expired = expire_closed_positions(s, now)

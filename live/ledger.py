@@ -14,6 +14,11 @@ def load_ledger(ledger_file: Path = None) -> list:
 
 
 def append_entry(trade: dict, ledger_file: Path = None) -> None:
+    """Append a single trade record to the ledger JSON file.
+
+    NOT safe for concurrent use: this is a read-modify-rewrite cycle.
+    The heartbeat loop is single-threaded, which makes this safe in practice.
+    """
     f = Path(ledger_file) if ledger_file else LEDGER_FILE
     f.parent.mkdir(parents=True, exist_ok=True)
     records = load_ledger(ledger_file=f)
