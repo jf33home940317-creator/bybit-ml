@@ -16,7 +16,7 @@ HOURLY_LOOKBACK = 300   # SMA_200 warmup (200) + buffer
 DAILY_LOOKBACK  = 220   # daily_ma_bias_200 warmup (200) + buffer
 
 
-def load_assets(symbol: str, target: str) -> tuple:
+def load_assets(symbol: str, target: str) -> tuple[list[str], list]:
     """Load feature_cols list and 5 fold models from storage."""
     report_path = config.STORAGE_FEATURES / f"{symbol}_validation_report.json"
     with open(report_path, encoding="utf-8") as f:
@@ -40,6 +40,13 @@ def compute_signal(
     """
     Fetch live data (or accept injected DataFrames for testing), compute features,
     run ensemble inference, and return signal dict.
+
+    Args for offline testing / injection:
+        hourly_df:     Inject hourly OHLCV (avoids live fetch). Defaults to None (fetch live).
+        daily_df:      Inject daily OHLCV (avoids live fetch). Defaults to None (fetch live).
+        btc_hourly_df: Inject BTC hourly data for cross_roc_24 feature. Defaults to None
+                       (fetched live when symbol != 'BTCUSDT'). Must inject for fully
+                       offline testing.
 
     Returns:
         {
@@ -66,7 +73,7 @@ def compute_signal(
     # Feature pipeline（繞過 build() 的檔案 I/O，直接呼叫底層函式）
     df = cleaner.align_daily_to_hourly(hourly_df, daily_df)
     df = indicators.compute(df, daily_df, ref_df=ref_df)
-    df = df.dropna(subset=feature_cols)
+    df = df.dropna(subset=feature_cols + ["atr_14"])
 
     if df.empty:
         raise ValueError(f"[{symbol}] No valid rows after feature computation — not enough history?")
@@ -74,6 +81,8 @@ def compute_signal(
     last_row = df.iloc[[-1]]           # keep as DataFrame (shape 1×N) for predict_proba
     X = last_row[feature_cols]
 
+    if not fold_models:
+        raise ValueError(f"[{symbol}] fold_models is empty — no models to ensemble")
     proba = float(np.mean([m.predict_proba(X)[0, 1] for m in fold_models]))
 
     return {
@@ -82,5 +91,5 @@ def compute_signal(
         "close":       float(last_row["close"].iloc[0]),
         "atr_14":      float(last_row["atr_14"].iloc[0]),
         "probability": round(proba, 4),
-        "signal":      proba >= optimal_threshold,
+        "signal":      bool(proba >= optimal_threshold),
     }
