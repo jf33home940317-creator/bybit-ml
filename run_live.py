@@ -6,7 +6,7 @@ import time
 import pandas as pd
 
 import config
-from live import pipeline, state, ledger, notifier
+from live import fetcher, pipeline, state, ledger, notifier
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -42,13 +42,34 @@ def heartbeat() -> None:
     # ── 1. 到期平倉 ──────────────────────────────────────────────────
     current_state, expired = state.expire_closed_positions(current_state, now)
     for pos in expired:
-        ledger.append_entry({**pos, "outcome": "timeout", "exit_time_actual": now.isoformat()})
+        exit_price = None
+        try:
+            exit_df = fetcher.fetch_latest(pos["symbol"], "60", 1)
+            exit_price = float(exit_df["close"].iloc[-1])
+        except Exception as e:
+            logger.warning(f"[{pos['symbol']}] Could not fetch exit price: {e}")
+
+        pnl_pct = None
+        outcome = "timeout"
+        if exit_price is not None:
+            pnl_pct  = round((exit_price - pos["entry_price"]) / pos["entry_price"] * 100, 4)
+            outcome  = "win" if exit_price > pos["entry_price"] else "loss"
+
+        ledger.append_entry({
+            **pos,
+            "outcome":          outcome,
+            "exit_price":       exit_price,
+            "pnl_pct":          pnl_pct,
+            "exit_time_actual": now.isoformat(),
+        })
+        result_line = (f"出場：{exit_price:.4f}  P&L：{pnl_pct:+.4f}%  結果：{'✅ 漲' if outcome == 'win' else '❌ 跌'}"
+                       if exit_price is not None else "出場價抓取失敗")
         notifier.send(
             f"[BYBIT_ML] 📋 **{pos['symbol']} 倉位到期**\n"
             f"進場：{pos['entry_price']:.4f} @ {pos['entry_time']}\n"
-            f"結果：Timeout（{HOLDING_BARS} 小時）"
+            f"{result_line}"
         )
-        logger.info(f"Expired: {pos['symbol']} @ {pos['entry_price']}")
+        logger.info(f"Expired: {pos['symbol']} entry={pos['entry_price']} exit={exit_price} outcome={outcome}")
 
     # ── 2. 檢查訊號 ──────────────────────────────────────────────────
     for symbol in config.LIVE_SYMBOLS:

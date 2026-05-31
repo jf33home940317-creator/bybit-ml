@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+"""顯示 paper trading 正確率統計。執行：python show_results.py"""
+import json
+import sys
+import io
+from pathlib import Path
+import config
+
+# Windows 終端機 UTF-8 輸出
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+
+
+def main() -> None:
+    lf = config.STORAGE_LIVE / "paper_trading_ledger.json"
+    if not lf.exists():
+        print("還沒有任何紀錄。等訊號觸發後再執行。")
+        return
+
+    records = json.loads(lf.read_text(encoding="utf-8"))
+
+    signals = [r for r in records if r.get("status") == "open"]
+    closes  = [r for r in records if "outcome" in r]
+
+    print("=" * 55)
+    print("  BYBIT_ML Paper Trading 正確率報告")
+    print("=" * 55)
+    print(f"  總共觸發訊號：{len(signals)} 次")
+    print(f"  已結算筆數：  {len(closes)} 筆")
+    print(f"  目前持倉中：  {len(signals) - len(closes)} 筆（等待 24h 結算）")
+
+    if not closes:
+        print("\n  尚無結算紀錄，請等訊號觸發後 24 小時再查。")
+        return
+
+    wins   = [r for r in closes if r.get("outcome") == "win"]
+    losses = [r for r in closes if r.get("outcome") == "loss"]
+    failed = [r for r in closes if r.get("outcome") == "timeout"]
+
+    accuracy = len(wins) / len(closes) * 100
+    pnls     = [r["pnl_pct"] for r in closes if r.get("pnl_pct") is not None]
+    avg_pnl  = sum(pnls) / len(pnls) if pnls else 0
+    total_pnl = sum(pnls)
+
+    print()
+    print(f"  ✅ 漲（正確）：{len(wins)} 次")
+    print(f"  ❌ 跌（錯誤）：{len(losses)} 次")
+    if failed:
+        print(f"  ⚠️  資料缺失：  {len(failed)} 次")
+    print(f"  ─────────────────────────")
+    print(f"  >>> 方向正確率：{accuracy:.1f}% <<<")
+    print(f"  平均每筆 P&L：  {avg_pnl:+.4f}%")
+    print(f"  累計 P&L：      {total_pnl:+.4f}%")
+
+    print()
+    print("  交易明細：")
+    print(f"  {'日期':<17} {'幣種':<10} {'進場':>10} {'出場':>10} {'P&L':>10}  結果")
+    print(f"  {'-'*17} {'-'*10} {'-'*10} {'-'*10} {'-'*10}  ----")
+    for r in closes:
+        ep      = r.get("exit_price")
+        pnl     = r.get("pnl_pct")
+        ep_str  = f"{ep:.2f}"  if ep  is not None else "N/A"
+        pnl_str = f"{pnl:+.4f}%" if pnl is not None else "N/A"
+        mark    = "✅" if r["outcome"] == "win" else ("❌" if r["outcome"] == "loss" else "⚠️")
+        print(f"  {r['entry_time'][:16]}  {r['symbol']:<10} "
+              f"{r['entry_price']:>10.2f} {ep_str:>10} {pnl_str:>10}  {mark}")
+
+    print("=" * 55)
+
+
+if __name__ == "__main__":
+    main()
