@@ -16,7 +16,12 @@ def fetch_latest(symbol: str, interval: str, n: int = 300) -> pd.DataFrame:
         timeout=10,
     )
     resp.raise_for_status()
-    rows = resp.json()["result"]["list"]   # Bybit returns newest first
+    body = resp.json()
+    if body.get("retCode", 0) != 0:
+        raise ValueError(
+            f"Bybit API error {body.get('retCode')}: {body.get('retMsg')}"
+        )
+    rows = body["result"]["list"]   # Bybit returns newest first
     rows = list(reversed(rows))            # convert to chronological
     df = pd.DataFrame(rows, columns=_COLUMNS)
     df["timestamp"] = pd.to_datetime(df["timestamp"].astype("int64"), unit="ms", utc=True)
