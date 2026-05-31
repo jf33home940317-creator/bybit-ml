@@ -1,7 +1,6 @@
 from unittest.mock import patch, MagicMock
 import pandas as pd
 import pytest
-import pytz
 
 # Bybit V5 kline response: newest first, columns = [startTime, open, high, low, close, volume, turnover]
 _MOCK_ROWS_NEWEST_FIRST = [
