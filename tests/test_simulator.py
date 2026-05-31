@@ -117,8 +117,10 @@ class TestPositionSizing:
         pnl_usd    = first_trade['pnl_usd']
 
         if first_trade['outcome'] == 'sl':
-            # SL 觸發：pnl_usd ≈ -(eq × 0.02) - fee
-            expected_loss = -(eq_entry * 0.02)
+            # pnl = −sl_pct − fee；for target_fixed: sl_pct=0.01, fee=0.002
+            # pnl_usd = (eq × risk_pct / sl_pct) × (−sl_pct − fee) = −eq × risk_pct × (1 + fee/sl_pct)
+            fee_rate, sl_pct_val = 0.002, 0.01
+            expected_loss = -(eq_entry * 0.02 * (1 + fee_rate / sl_pct_val))
             assert abs(pnl_usd - expected_loss) <= eq_entry * 0.001, (
                 f"SL pnl_usd={pnl_usd:.2f}, expected≈{expected_loss:.2f}"
             )
