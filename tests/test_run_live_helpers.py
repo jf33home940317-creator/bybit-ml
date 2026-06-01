@@ -92,3 +92,88 @@ class TestErrorThrottle:
         now = pd.Timestamp("2026-06-01T00:00:00+00:00")
         assert t.should_alert("ETHUSDT_signal", now) is True
         assert t.should_alert("BTCUSDT_signal", now) is True
+
+
+# ─── _is_disabled (kill switch) ────────────────────────────────────────────────
+
+class TestIsDisabled:
+    """Touch .disabled to pause signal generation; rm it to resume."""
+
+    def test_returns_false_when_no_flag_file(self, tmp_path):
+        from run_live import _is_disabled
+        assert _is_disabled(tmp_path / ".disabled") is False
+
+    def test_returns_true_when_flag_file_exists(self, tmp_path):
+        from run_live import _is_disabled
+        flag = tmp_path / ".disabled"
+        flag.touch()
+        assert _is_disabled(flag) is True
+
+
+# ─── _record_prob (prob history CSV) ───────────────────────────────────────────
+
+class TestRecordProb:
+    """Every heartbeat writes one row to prob_history.csv."""
+
+    def test_creates_csv_with_header_on_first_write(self, tmp_path):
+        from run_live import _record_prob
+        csv_path = tmp_path / "prob_history.csv"
+        _record_prob(csv_path, "2026-06-01T12:01:00+00:00", "ETHUSDT", 0.5415, False, 2001.5)
+        lines = csv_path.read_text().strip().split("\n")
+        assert lines[0] == "timestamp,symbol,probability,signal,close"
+        assert "ETHUSDT" in lines[1]
+        assert "0.5415" in lines[1]
+
+    def test_appends_without_repeating_header(self, tmp_path):
+        from run_live import _record_prob
+        csv_path = tmp_path / "prob_history.csv"
+        _record_prob(csv_path, "2026-06-01T12:00:00+00:00", "ETHUSDT", 0.54, False, 2000.0)
+        _record_prob(csv_path, "2026-06-01T13:00:00+00:00", "ETHUSDT", 0.78, True, 2010.0)
+        lines = csv_path.read_text().strip().split("\n")
+        assert len(lines) == 3  # header + 2 rows
+        header_count = sum(1 for l in lines if l.startswith("timestamp,"))
+        assert header_count == 1
+
+
+# ─── _get_assets (model cache) ─────────────────────────────────────────────────
+
+class TestGetAssets:
+    """load_assets should only be called once per symbol+target pair."""
+
+    def test_caches_result_after_first_call(self, monkeypatch):
+        from run_live import _get_assets, _assets_cache
+        _assets_cache.clear()
+
+        call_count = {"n": 0}
+        fake_cols = ["rsi_14", "ppo"]
+        fake_models = ["model1", "model2"]
+
+        def mock_load(symbol, target):
+            call_count["n"] += 1
+            return fake_cols, fake_models
+
+        import run_live
+        monkeypatch.setattr(run_live.pipeline, "load_assets", mock_load)
+
+        r1 = _get_assets("ETHUSDT", "target_atr")
+        r2 = _get_assets("ETHUSDT", "target_atr")
+        assert r1 == r2 == (fake_cols, fake_models)
+        assert call_count["n"] == 1, "load_assets should only be called once"
+        _assets_cache.clear()
+
+    def test_different_keys_call_separately(self, monkeypatch):
+        from run_live import _get_assets, _assets_cache
+        _assets_cache.clear()
+
+        call_count = {"n": 0}
+        def mock_load(symbol, target):
+            call_count["n"] += 1
+            return [f"col_{symbol}"], [f"model_{symbol}"]
+
+        import run_live
+        monkeypatch.setattr(run_live.pipeline, "load_assets", mock_load)
+
+        _get_assets("ETHUSDT", "target_atr")
+        _get_assets("BTCUSDT", "target_atr")
+        assert call_count["n"] == 2
+        _assets_cache.clear()

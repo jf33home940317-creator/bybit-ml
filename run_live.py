@@ -1,8 +1,10 @@
 # run_live.py
+import csv
 import json
 import logging
 import schedule
 import time
+from pathlib import Path
 import pandas as pd
 
 import config
@@ -12,6 +14,10 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 _threshold_cache: dict = {}
+_assets_cache: dict = {}
+
+DISABLE_FLAG = config.BASE_DIR / ".disabled"
+PROB_CSV     = config.STORAGE_LIVE / "prob_history.csv"
 
 
 # ─── Pure helpers (unit-tested in tests/test_run_live_helpers.py) ────────────
@@ -71,6 +77,40 @@ class _ErrorThrottle:
 
 
 _error_throttle = _ErrorThrottle(cooldown_hours=6)
+
+
+def _is_disabled(flag_path: Path = None) -> bool:
+    """Return True if the kill-switch flag file exists."""
+    return (flag_path or DISABLE_FLAG).exists()
+
+
+def _get_assets(symbol: str, target: str) -> tuple[list[str], list]:
+    """Cached wrapper around pipeline.load_assets — models are read once at
+    first heartbeat, not every hour."""
+    key = f"{symbol}_{target}"
+    if key not in _assets_cache:
+        _assets_cache[key] = pipeline.load_assets(symbol, target)
+        logger.info(f"[{symbol}] Loaded {len(_assets_cache[key][1])} fold models (cached)")
+    return _assets_cache[key]
+
+
+def _record_prob(
+    csv_path: Path,
+    timestamp: str,
+    symbol: str,
+    probability: float,
+    signal: bool,
+    close: float,
+) -> None:
+    """Append one row to prob_history.csv. Creates the file + header on first call."""
+    csv_path = Path(csv_path)
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    write_header = not csv_path.exists()
+    with open(csv_path, "a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        if write_header:
+            writer.writerow(["timestamp", "symbol", "probability", "signal", "close"])
+        writer.writerow([timestamp, symbol, probability, signal, close])
 
 
 def _load_threshold(symbol: str, target: str) -> float:
@@ -226,7 +266,14 @@ def heartbeat() -> None:
         logger.info(f"Expired: {pos['symbol']} entry={pos['entry_price']} exit={exit_price} outcome={outcome}")
 
     # ── 2. 檢查訊號 ──────────────────────────────────────────────────
+    disabled = _is_disabled()
+    if disabled:
+        logger.info("[heartbeat] Kill switch active (.disabled exists) — skipping signal generation")
+
     for symbol in config.LIVE_SYMBOLS:
+        if disabled:
+            break
+
         n_active = state.count_active(current_state)
         if n_active >= config.MAX_CONCURRENT:
             logger.info(f"[{symbol}] Concurrent limit ({n_active}/{config.MAX_CONCURRENT}), skip")
@@ -236,7 +283,7 @@ def heartbeat() -> None:
         threshold = _load_threshold(symbol, target)
 
         try:
-            feature_cols, fold_models = pipeline.load_assets(symbol, target)
+            feature_cols, fold_models = _get_assets(symbol, target)
             result = pipeline.compute_signal(symbol, feature_cols, fold_models, threshold)
         except Exception as e:
             logger.error(f"[{symbol}] Signal failed: {e}")
@@ -249,6 +296,13 @@ def heartbeat() -> None:
             continue
 
         logger.info(f"[{symbol}] prob={result['probability']:.4f} signal={result['signal']}")
+
+        # Record probability for trend analysis
+        try:
+            _record_prob(PROB_CSV, result["timestamp"], symbol,
+                         result["probability"], result["signal"], result["close"])
+        except Exception as e:
+            logger.warning(f"[{symbol}] Failed to record prob: {e}")
 
         if not result["signal"]:
             continue
