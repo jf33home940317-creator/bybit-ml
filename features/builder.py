@@ -32,6 +32,18 @@ def build(
     hourly_df = pd.read_parquet(raw_dir / f"{symbol}_1h.parquet")
     daily_df  = pd.read_parquet(raw_dir / f"{symbol}_1d.parquet")
 
+    # Load FR/OI if available (Phase 6 — gracefully skip if not yet fetched)
+    fr_df = None
+    oi_df = None
+    fr_path = raw_dir / f"{symbol}_funding_rate.parquet"
+    oi_path = raw_dir / f"{symbol}_open_interest.parquet"
+    if fr_path.exists():
+        fr_df = pd.read_parquet(fr_path)
+        logger.info(f"[{symbol}] Loaded funding rate: {len(fr_df):,} rows")
+    if oi_path.exists():
+        oi_df = pd.read_parquet(oi_path)
+        logger.info(f"[{symbol}] Loaded open interest: {len(oi_df):,} rows")
+
     # 2. Dual-timeframe alignment (Phase 1 function, prevents look-ahead bias)
     df = cleaner.align_daily_to_hourly(hourly_df, daily_df)
 
@@ -46,7 +58,7 @@ def build(
             ref_df = ref_raw[["timestamp", "close"]].rename(columns={"close": "ref_close"})
 
     # 3. Compute technical indicators — produces head NaNs; also adds atr_14 needed by labels
-    df = indicators.compute(df, daily_df, ref_df=ref_df)
+    df = indicators.compute(df, daily_df, ref_df=ref_df, fr_df=fr_df, oi_df=oi_df)
 
     # 3.1 ETH: drop cross_ratio (ETH/BTC is self-referential noise; keep cross_roc_24 as pure BTC momentum)
     if symbol == "ETHUSDT" and "cross_ratio" in df.columns:
