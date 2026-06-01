@@ -177,3 +177,132 @@ class TestGetAssets:
         _get_assets("BTCUSDT", "target_atr")
         assert call_count["n"] == 2
         _assets_cache.clear()
+
+
+# ─── _check_risk_guards ───────────────────────────────────────────────────────
+
+class TestCheckRiskGuards:
+    """Risk guards must block new signals when thresholds are breached."""
+
+    def _make_closed_records(self, outcomes, pnl_pcts, pnl_usds, exit_times):
+        """Helper to build ledger records for testing."""
+        records = []
+        for outcome, pnl_pct, pnl_usd, exit_time in zip(
+            outcomes, pnl_pcts, pnl_usds, exit_times
+        ):
+            records.append({
+                "outcome": outcome,
+                "pnl_pct": pnl_pct,
+                "pnl_usd": pnl_usd,
+                "position_usd": 100_000,
+                "exit_time_actual": exit_time,
+            })
+        return records
+
+    # ── MDD drawdown halt ──
+
+    def test_mdd_halt_triggered_when_equity_drops_below_threshold(self):
+        from run_live import _check_risk_guards
+        import config
+
+        # Simulate equity dropped to 840k from 1M peak → -16% DD
+        records = self._make_closed_records(
+            outcomes=["loss"] * 5,
+            pnl_pcts=[-3.2] * 5,
+            pnl_usds=[-32_000.0] * 5,
+            exit_times=["2026-06-01T10:00:00+00:00"] * 5,
+        )
+        now = pd.Timestamp("2026-06-01T12:00:00+00:00")
+        result = _check_risk_guards(records, now)
+
+        assert result["blocked"] is True
+        assert "回撤" in result["reason"]
+
+    def test_mdd_halt_not_triggered_within_threshold(self):
+        from run_live import _check_risk_guards
+
+        # Small loss, equity = 1M - 5k = 995k → -0.5% DD (within limit)
+        records = self._make_closed_records(
+            outcomes=["loss"],
+            pnl_pcts=[-0.5],
+            pnl_usds=[-5_000.0],
+            exit_times=["2026-06-01T10:00:00+00:00"],
+        )
+        now = pd.Timestamp("2026-06-01T12:00:00+00:00")
+        result = _check_risk_guards(records, now)
+
+        assert result["blocked"] is False
+
+    # ── Consecutive losses ──
+
+    def test_consecutive_losses_halt_at_5(self):
+        from run_live import _check_risk_guards
+
+        # Last 5 trades all losses but small (so MDD not breached)
+        records = self._make_closed_records(
+            outcomes=["loss"] * 5,
+            pnl_pcts=[-0.3] * 5,
+            pnl_usds=[-300.0] * 5,
+            exit_times=["2026-06-01T10:00:00+00:00"] * 5,
+        )
+        now = pd.Timestamp("2026-06-01T12:00:00+00:00")
+        result = _check_risk_guards(records, now)
+
+        assert result["blocked"] is True
+        assert "連續" in result["reason"]
+
+    def test_consecutive_losses_not_triggered_with_win_in_between(self):
+        from run_live import _check_risk_guards
+
+        records = self._make_closed_records(
+            outcomes=["loss", "loss", "win", "loss", "loss"],
+            pnl_pcts=[-0.3, -0.3, 1.0, -0.3, -0.3],
+            pnl_usds=[-300, -300, 1000, -300, -300],
+            exit_times=["2026-06-01T10:00:00+00:00"] * 5,
+        )
+        now = pd.Timestamp("2026-06-01T12:00:00+00:00")
+        result = _check_risk_guards(records, now)
+
+        assert result["blocked"] is False
+
+    # ── Daily loss limit ──
+
+    def test_daily_loss_halt_triggered(self):
+        from run_live import _check_risk_guards
+        import config
+
+        # Today lost $60k on 1M equity → -6% > -5% limit
+        now = pd.Timestamp("2026-06-01T15:00:00+00:00")
+        records = self._make_closed_records(
+            outcomes=["loss", "loss"],
+            pnl_pcts=[-3.0, -3.0],
+            pnl_usds=[-30_000.0, -30_000.0],
+            exit_times=["2026-06-01T08:00:00+00:00", "2026-06-01T10:00:00+00:00"],
+        )
+        result = _check_risk_guards(records, now)
+
+        assert result["blocked"] is True
+        assert "當日" in result["reason"]
+
+    def test_daily_loss_ignores_yesterday(self):
+        from run_live import _check_risk_guards
+
+        # Yesterday lost big, today clean
+        now = pd.Timestamp("2026-06-02T02:00:00+00:00")
+        records = self._make_closed_records(
+            outcomes=["loss", "loss"],
+            pnl_pcts=[-3.0, -3.0],
+            pnl_usds=[-30_000.0, -30_000.0],
+            exit_times=["2026-06-01T08:00:00+00:00", "2026-06-01T10:00:00+00:00"],
+        )
+        result = _check_risk_guards(records, now)
+
+        assert result["blocked"] is False
+
+    # ── No records ──
+
+    def test_no_records_passes(self):
+        from run_live import _check_risk_guards
+        now = pd.Timestamp("2026-06-01T12:00:00+00:00")
+        result = _check_risk_guards([], now)
+        assert result["blocked"] is False

@@ -113,6 +113,71 @@ def _record_prob(
         writer.writerow([timestamp, symbol, probability, signal, close])
 
 
+def _check_risk_guards(records: list, now: pd.Timestamp) -> dict:
+    """Evaluate three risk guards. Returns {"blocked": bool, "reason": str}.
+
+    Guards (checked in order, first breach wins):
+      1. MDD drawdown halt   — equity vs all-time peak
+      2. Consecutive losses   — last N trades all losses
+      3. Daily loss limit     — today's realized loss vs equity
+    """
+    closes = [
+        r for r in records
+        if "outcome" in r
+        and r.get("pnl_usd") is not None
+    ]
+
+    if not closes:
+        return {"blocked": False, "reason": ""}
+
+    # ── 1. MDD drawdown halt ──
+    equity = config.INITIAL_EQUITY
+    peak = equity
+    for r in closes:
+        equity += r["pnl_usd"]
+        peak = max(peak, equity)
+
+    if peak > 0:
+        dd_pct = (equity - peak) / peak * 100
+        if dd_pct <= config.MAX_DRAWDOWN_PCT:
+            return {
+                "blocked": True,
+                "reason": f"回撤熔斷: {dd_pct:.2f}% (限制 {config.MAX_DRAWDOWN_PCT}%)",
+            }
+
+    # ── 2. Consecutive losses ──
+    recent_outcomes = [r["outcome"] for r in closes[-config.MAX_CONSECUTIVE_LOSSES:]]
+    if (len(recent_outcomes) >= config.MAX_CONSECUTIVE_LOSSES
+            and all(o == "loss" for o in recent_outcomes)):
+        return {
+            "blocked": True,
+            "reason": f"連續 {config.MAX_CONSECUTIVE_LOSSES} 筆虧損暫停",
+        }
+
+    # ── 3. Daily loss limit ──
+    today_start = now.normalize()  # midnight UTC
+
+    def _parse_utc(ts_str: str) -> pd.Timestamp:
+        t = pd.Timestamp(ts_str)
+        if t.tzinfo is None:
+            t = t.tz_localize("UTC")
+        return t
+
+    daily_pnl = sum(
+        r["pnl_usd"] for r in closes
+        if _parse_utc(r.get("exit_time_actual", "1970-01-01T00:00:00+00:00")) >= today_start
+    )
+    if equity > 0:
+        daily_loss_pct = daily_pnl / equity * 100
+        if daily_loss_pct <= config.MAX_DAILY_LOSS_PCT:
+            return {
+                "blocked": True,
+                "reason": f"當日虧損熔斷: {daily_loss_pct:.2f}% (限制 {config.MAX_DAILY_LOSS_PCT}%)",
+            }
+
+    return {"blocked": False, "reason": ""}
+
+
 def _load_threshold(symbol: str, target: str) -> float:
     key = f"{symbol}_{target}"
     if key not in _threshold_cache:
@@ -270,8 +335,26 @@ def heartbeat() -> None:
     if disabled:
         logger.info("[heartbeat] Kill switch active (.disabled exists) — skipping signal generation")
 
+    # Risk guards: check MDD / consecutive losses / daily loss
+    risk_check = {"blocked": False, "reason": ""}
+    if not disabled:
+        try:
+            all_records = ledger.load_ledger()
+            risk_check = _check_risk_guards(all_records, now)
+            if risk_check["blocked"]:
+                logger.warning(f"[heartbeat] Risk guard triggered: {risk_check['reason']}")
+                if _error_throttle.should_alert("risk_guard", now):
+                    notifier.send(
+                        f"[BYBIT_ML] 🚨 **風控熔斷**\n"
+                        f"{risk_check['reason']}\n"
+                        f"新訊號已暫停，SL/TP 監控照常。\n"
+                        f"(同一警告 6h 內僅推播一次)"
+                    )
+        except Exception as e:
+            logger.error(f"Risk guard check failed: {e}")
+
     for symbol in config.LIVE_SYMBOLS:
-        if disabled:
+        if disabled or risk_check["blocked"]:
             break
 
         n_active = state.count_active(current_state)

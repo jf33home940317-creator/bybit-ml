@@ -43,6 +43,11 @@ HOLDING_BARS   = 24       # 24h timeout if SL/TP not hit
 MAX_CONCURRENT = 3
 FEE_PCT        = 0.2      # 0.2% round-trip, matches backtest fee=0.002
 
+# Risk guards — any breach pauses new signal generation
+MAX_DRAWDOWN_PCT       = -15.0   # halt if equity drops > 15% from peak
+MAX_CONSECUTIVE_LOSSES = 5       # halt after 5 consecutive losing trades
+MAX_DAILY_LOSS_PCT     = -5.0    # halt if today's realized loss > 5% of equity
+
 OVERLAP_HOURS = 3   # overlap candles re-fetched to overwrite unclosed candles from previous run
 OVERLAP_DAYS = 3
 RATE_LIMIT_SLEEP = 0.2
