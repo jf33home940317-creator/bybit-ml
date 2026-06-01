@@ -161,29 +161,34 @@ def fetch_open_interest(
     end_dt = _parse_date(end_date)
 
     all_batches: list[pd.DataFrame] = []
-    current_start_ms = _to_ms(start_dt)
-    end_ms = _to_ms(end_dt)
+    start_ms = _to_ms(start_dt)
+    current_end_ms = _to_ms(end_dt)
+    batch_count = 0
 
-    while current_start_ms < end_ms:
+    # Bybit OI API returns newest-first regardless of startTime, so we
+    # paginate BACKWARD from endTime (same strategy as fetch_funding_rate).
+    while current_end_ms > start_ms:
         rows = _fetch_oi_batch(
-            _requests, OI_URL, symbol, current_start_ms, end_ms, interval_time
+            _requests, OI_URL, symbol, start_ms, current_end_ms, interval_time
         )
         if not rows:
             break
 
         batch_df = _parse_oi_rows(rows)
-        batch_df = batch_df[batch_df["timestamp"] <= end_dt]
+        batch_df = batch_df[batch_df["timestamp"] >= start_dt]
 
         if batch_df.empty:
             break
 
         all_batches.append(batch_df)
+        batch_count += 1
 
-        last_ts_ms = int(batch_df["timestamp"].iloc[-1].value) // 1_000_000
-        next_start_ms = last_ts_ms + 1
-        if next_start_ms <= current_start_ms:
-            break  # guard against infinite loop
-        current_start_ms = next_start_ms
+        oldest_ts_ms = int(batch_df["timestamp"].min().value) // 1_000_000
+        current_end_ms = oldest_ts_ms - 1
+
+        if batch_count % 10 == 0:
+            total = sum(len(b) for b in all_batches)
+            logger.info(f"  [{symbol} OI] batch {batch_count} | {total:,} records")
 
         time.sleep(config.RATE_LIMIT_SLEEP)
 
