@@ -58,6 +58,189 @@ def fetch_ohlcv(
     return pd.concat(all_batches, ignore_index=True)
 
 
+FR_COLUMNS = ["timestamp", "funding_rate"]
+OI_COLUMNS = ["timestamp", "open_interest"]
+
+
+def fetch_funding_rate(
+    symbol: str,
+    start_date: str,
+    end_date: str,
+) -> pd.DataFrame:
+    """Fetch funding-rate history from Bybit and return a chronological DataFrame.
+
+    Bybit's ``get_funding_rate_history`` returns rows newest-first and accepts an
+    ``endTime`` cursor.  We paginate backward from end_date until we pass start_date.
+    """
+    session = HTTP(testnet=False, api_key=config.API_KEY, api_secret=config.API_SECRET)
+    start_dt = _parse_date(start_date)
+    end_dt = _parse_date(end_date)
+
+    all_batches: list[pd.DataFrame] = []
+    current_end_ms = _to_ms(end_dt)
+
+    while True:
+        rows = _fetch_fr_batch(session, symbol, current_end_ms)
+        if not rows:
+            break
+
+        # rows are newest-first; parse and filter
+        batch_df = _parse_fr_rows(rows)
+        batch_df = batch_df[batch_df["timestamp"] >= start_dt]
+
+        if not batch_df.empty:
+            all_batches.append(batch_df)
+
+        # Oldest timestamp in this batch (rows are newest-first, so last after parsing)
+        oldest_ts_ms = int(pd.to_numeric(rows[-1]["fundingRateTimestamp"]))
+        if oldest_ts_ms <= _to_ms(start_dt):
+            break
+
+        # Move cursor to just before the oldest timestamp we received
+        current_end_ms = oldest_ts_ms - 1
+
+        time.sleep(config.RATE_LIMIT_SLEEP)
+
+    if not all_batches:
+        return pd.DataFrame(columns=FR_COLUMNS)
+
+    df = pd.concat(all_batches, ignore_index=True)
+    df = df.drop_duplicates(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
+    return df
+
+
+def _fetch_fr_batch(session, symbol: str, end_ms: int) -> list:
+    for attempt in range(config.MAX_RETRIES):
+        try:
+            resp = session.get_funding_rate_history(
+                category="linear",
+                symbol=symbol,
+                endTime=end_ms,
+                limit=200,
+            )
+            return resp["result"]["list"]
+        except Exception as exc:
+            if attempt == config.MAX_RETRIES - 1:
+                raise
+            wait = 2 ** attempt
+            logger.warning(
+                f"FR API error (attempt {attempt + 1}/{config.MAX_RETRIES}), retry in {wait}s: {exc}"
+            )
+            time.sleep(wait)
+
+
+def _parse_fr_rows(rows: list) -> pd.DataFrame:
+    df = pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(
+                pd.to_numeric([r["fundingRateTimestamp"] for r in rows]), unit="ms", utc=True
+            ),
+            "funding_rate": pd.to_numeric(
+                [r["fundingRate"] for r in rows]
+            ).astype("float64"),
+        }
+    )
+    return df
+
+
+def fetch_open_interest(
+    symbol: str,
+    start_date: str,
+    end_date: str,
+    interval_time: str = "1h",
+) -> pd.DataFrame:
+    """Fetch open-interest data from Bybit REST API and return a chronological DataFrame.
+
+    Uses ``requests.get`` directly (not pybit) because the OI endpoint requires
+    ``startTime``/``endTime`` window pagination.
+    """
+    import requests as _requests  # local import to avoid module-level name clash
+
+    OI_URL = "https://api.bybit.com/v5/market/open-interest"
+    start_dt = _parse_date(start_date)
+    end_dt = _parse_date(end_date)
+
+    all_batches: list[pd.DataFrame] = []
+    current_start_ms = _to_ms(start_dt)
+    end_ms = _to_ms(end_dt)
+
+    while current_start_ms < end_ms:
+        rows = _fetch_oi_batch(
+            _requests, OI_URL, symbol, current_start_ms, end_ms, interval_time
+        )
+        if not rows:
+            break
+
+        batch_df = _parse_oi_rows(rows)
+        batch_df = batch_df[batch_df["timestamp"] <= end_dt]
+
+        if batch_df.empty:
+            break
+
+        all_batches.append(batch_df)
+
+        last_ts_ms = int(batch_df["timestamp"].iloc[-1].value) // 1_000_000
+        next_start_ms = last_ts_ms + 1
+        if next_start_ms <= current_start_ms:
+            break  # guard against infinite loop
+        current_start_ms = next_start_ms
+
+        time.sleep(config.RATE_LIMIT_SLEEP)
+
+    if not all_batches:
+        return pd.DataFrame(columns=OI_COLUMNS)
+
+    df = pd.concat(all_batches, ignore_index=True)
+    df = df.drop_duplicates(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
+    return df
+
+
+def _fetch_oi_batch(
+    requests_mod, url: str, symbol: str, start_ms: int, end_ms: int, interval_time: str
+) -> list:
+    for attempt in range(config.MAX_RETRIES):
+        try:
+            resp = requests_mod.get(
+                url,
+                params={
+                    "category": "linear",
+                    "symbol": symbol,
+                    "intervalTime": interval_time,
+                    "startTime": start_ms,
+                    "endTime": end_ms,
+                    "limit": 200,
+                },
+                timeout=10,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            if data.get("retCode", -1) != 0:
+                raise ValueError(f"Bybit OI error: {data}")
+            return data["result"]["list"]
+        except Exception as exc:
+            if attempt == config.MAX_RETRIES - 1:
+                raise
+            wait = 2 ** attempt
+            logger.warning(
+                f"OI API error (attempt {attempt + 1}/{config.MAX_RETRIES}), retry in {wait}s: {exc}"
+            )
+            time.sleep(wait)
+
+
+def _parse_oi_rows(rows: list) -> pd.DataFrame:
+    df = pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(
+                pd.to_numeric([r["timestamp"] for r in rows]), unit="ms", utc=True
+            ),
+            "open_interest": pd.to_numeric(
+                [r["openInterest"] for r in rows]
+            ).astype("float64"),
+        }
+    )
+    return df
+
+
 def _fetch_batch(session, symbol: str, interval: str, start_ms: int) -> list:
     for attempt in range(config.MAX_RETRIES):
         try:
