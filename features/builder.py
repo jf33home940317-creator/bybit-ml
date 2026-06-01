@@ -57,6 +57,9 @@ def build(
 
     # 5. Clean: replace inf first, then drop NaN (order matters)
     df = df.replace([np.inf, -np.inf], np.nan)
+    # Drop columns that are entirely NaN (e.g. funding_rate / OI columns when
+    # no fr_df / oi_df was supplied) so they do not cause all rows to be removed.
+    df = df.dropna(axis=1, how="all")
     df = df.dropna()
     df = df.reset_index(drop=True)
 

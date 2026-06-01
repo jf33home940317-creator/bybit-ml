@@ -14,7 +14,7 @@ def _find_ppo_col(ppo_df: "pd.DataFrame", prefix: str) -> str:
     return matches[0]
 
 
-def compute(hourly_df: pd.DataFrame, daily_df: pd.DataFrame, ref_df: pd.DataFrame = None) -> pd.DataFrame:
+def compute(hourly_df: pd.DataFrame, daily_df: pd.DataFrame, ref_df: pd.DataFrame = None, fr_df: pd.DataFrame = None, oi_df: pd.DataFrame = None) -> pd.DataFrame:
     df = hourly_df.copy()
 
     # 1. RSI: only 14 and 50 (rsi_7 removed)
@@ -86,7 +86,95 @@ def compute(hourly_df: pd.DataFrame, daily_df: pd.DataFrame, ref_df: pd.DataFram
         df["cross_roc_24"] = df["ref_close"].pct_change(24)
         df = df.drop(columns=["ref_close"])
 
+    # 13. Funding Rate features
+    df = _attach_funding_features(df, fr_df)
+
+    # 14. Open Interest features
+    df = _attach_oi_features(df, oi_df)
+
     return df
+
+
+def _attach_funding_features(
+    hourly_df: pd.DataFrame,
+    fr_df: pd.DataFrame,
+) -> pd.DataFrame:
+    result = hourly_df.copy()
+
+    # If no funding rate data, add NaN columns and return
+    if fr_df is None or len(fr_df) == 0:
+        result["funding_rate"] = np.nan
+        result["funding_rate_ma_24"] = np.nan
+        result["funding_zscore_30d"] = np.nan
+        return result
+
+    hourly_sorted = result.sort_values("timestamp").copy()
+    fr_sorted = fr_df.sort_values("timestamp").copy()
+
+    # Normalize timestamp precision to prevent merge issues
+    hourly_sorted["timestamp"] = hourly_sorted["timestamp"].astype("datetime64[us, UTC]")
+    fr_sorted["timestamp"] = fr_sorted["timestamp"].astype("datetime64[us, UTC]")
+
+    # merge_asof with direction="backward" prevents look-ahead bias
+    merged = pd.merge_asof(
+        hourly_sorted,
+        fr_sorted[["timestamp", "funding_rate"]],
+        on="timestamp",
+        direction="backward",
+    )
+
+    # Rolling features on the merged funding_rate
+    merged["funding_rate_ma_24"] = merged["funding_rate"].rolling(24, min_periods=1).mean()
+
+    rolling_mean_720 = merged["funding_rate"].rolling(720, min_periods=1).mean()
+    rolling_std_720 = merged["funding_rate"].rolling(720, min_periods=1).std()
+    # Replace std=0 with NaN to avoid division by zero
+    rolling_std_720 = rolling_std_720.replace(0, np.nan)
+    merged["funding_zscore_30d"] = (merged["funding_rate"] - rolling_mean_720) / rolling_std_720
+
+    return merged
+
+
+def _attach_oi_features(
+    hourly_df: pd.DataFrame,
+    oi_df: pd.DataFrame,
+) -> pd.DataFrame:
+    result = hourly_df.copy()
+
+    # If no open interest data, add NaN columns and return
+    if oi_df is None or len(oi_df) == 0:
+        result["oi_change_1h"] = np.nan
+        result["oi_change_24h"] = np.nan
+        result["oi_price_divergence"] = np.nan
+        return result
+
+    hourly_sorted = result.sort_values("timestamp").copy()
+    oi_sorted = oi_df.sort_values("timestamp").copy()
+
+    # Normalize timestamp precision
+    hourly_sorted["timestamp"] = hourly_sorted["timestamp"].astype("datetime64[us, UTC]")
+    oi_sorted["timestamp"] = oi_sorted["timestamp"].astype("datetime64[us, UTC]")
+
+    # merge_asof with direction="backward" prevents look-ahead bias
+    merged = pd.merge_asof(
+        hourly_sorted,
+        oi_sorted[["timestamp", "open_interest"]],
+        on="timestamp",
+        direction="backward",
+    )
+
+    merged["oi_change_1h"] = merged["open_interest"].pct_change(1)
+    merged["oi_change_24h"] = merged["open_interest"].pct_change(24)
+
+    # Divergence: OI and price moving in opposite directions
+    merged["oi_price_divergence"] = (
+        np.sign(merged["oi_change_24h"]) * np.sign(merged["roc_24"]) < 0
+    ).astype(int)
+
+    # Drop raw open_interest — only keep derived features
+    merged = merged.drop(columns=["open_interest"], errors="ignore")
+
+    return merged
 
 
 def _attach_daily_features(
