@@ -48,6 +48,11 @@ MAX_DRAWDOWN_PCT       = -15.0   # halt if equity drops > 15% from peak
 MAX_CONSECUTIVE_LOSSES = 5       # halt after 5 consecutive losing trades
 MAX_DAILY_LOSS_PCT     = -5.0    # halt if today's realized loss > 5% of equity
 
+# Shadow threshold — signals between SHADOW and optimal_threshold are logged
+# to the ledger (status="shadow") but NOT executed. Used to compare whether
+# a lower threshold would have been profitable in live conditions.
+SHADOW_THRESHOLD       = 0.70
+
 OVERLAP_HOURS = 3   # overlap candles re-fetched to overwrite unclosed candles from previous run
 OVERLAP_DAYS = 3
 RATE_LIMIT_SLEEP = 0.2

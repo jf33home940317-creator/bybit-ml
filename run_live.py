@@ -388,6 +388,25 @@ def heartbeat() -> None:
             logger.warning(f"[{symbol}] Failed to record prob: {e}")
 
         if not result["signal"]:
+            # Shadow signal: prob between SHADOW_THRESHOLD and optimal — record but don't trade
+            if result["probability"] >= config.SHADOW_THRESHOLD:
+                shadow_sl, shadow_tp = _sl_tp(result["close"], result["atr_14"])
+                ts_s = pd.Timestamp(result["timestamp"])
+                if ts_s.tzinfo is None:
+                    ts_s = ts_s.tz_localize("UTC")
+                ledger.append_entry({
+                    "symbol":       symbol,
+                    "target":       target,
+                    "entry_time":   result["timestamp"],
+                    "entry_price":  result["close"],
+                    "sl_price":     round(shadow_sl, 4),
+                    "tp_price":     round(shadow_tp, 4),
+                    "atr_14":       result["atr_14"],
+                    "probability":  result["probability"],
+                    "exit_time":    (ts_s + pd.Timedelta(hours=config.HOLDING_BARS)).isoformat(),
+                    "status":       "shadow",
+                })
+                logger.info(f"[{symbol}] Shadow signal recorded: prob={result['probability']:.4f} (>={config.SHADOW_THRESHOLD}, <{threshold})")
             continue
 
         sl, tp  = _sl_tp(result["close"], result["atr_14"])

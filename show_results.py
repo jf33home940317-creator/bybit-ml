@@ -17,18 +17,20 @@ def main() -> None:
 
     records = json.loads(lf.read_text(encoding="utf-8"))
 
-    opens  = [r for r in records if r.get("status") == "open"]
-    closes = [r for r in records if "outcome" in r]
+    opens   = [r for r in records if r.get("status") == "open"]
+    shadows = [r for r in records if r.get("status") == "shadow"]
+    closes  = [r for r in records if "outcome" in r]
 
     print("=" * 55)
     print("  BYBIT_ML Paper Trading 正確率報告")
     print("=" * 55)
-    print(f"  總共觸發訊號:{len(opens)} 次")
+    print(f"  正式訊號(>=0.75):{len(opens)} 次")
+    print(f"  影子訊號(0.70-0.75):{len(shadows)} 次")
     print(f"  已結算筆數:  {len(closes)} 筆")
     print(f"  目前持倉中:  {len(opens) - len(closes)} 筆(等待 24h 結算)")
 
-    if not closes:
-        print("\n  尚無結算紀錄,請等訊號觸發後 24 小時再查。")
+    if not closes and not shadows:
+        print("\n  尚無任何紀錄,請等訊號觸發後再查。")
         return
 
     wins        = [r for r in closes if r.get("outcome") == "win"]
