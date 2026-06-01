@@ -12,7 +12,7 @@
 |---|---|
 | 回測期間 | 2022-2024（約 2 年） |
 | 訓練幣種 | ETHUSDT |
-| 訊號門檻 | 機率 >= 0.75 |
+| 訊號門檻 | 機率 >= 0.75（影子門檻 0.70） |
 | 回測總報酬 | **+98.3%** |
 | Sharpe Ratio | **1.50** |
 | 最大回撤 (MDD) | -13.3% |
@@ -27,7 +27,7 @@
 
 ```
 Phase 1: 資料抓取
-  Bybit V5 API -> 1h / 日線 K 棒 -> Parquet 儲存
+  Bybit V5 API -> 1h / 日線 K 棒 + Funding Rate + Open Interest -> Parquet
 
 Phase 2: 特徵工程（30+ 特徵）
   RSI / PPO / ATR / Bollinger Band / MA Bias / ROC
@@ -48,9 +48,15 @@ Phase 5: 實盤訊號（24/7 Oracle Cloud VM）
   每小時 :01 執行 heartbeat
   已收盤 K 棒推論 -> prob >= 0.75 觸發
   風控三道防線（MDD / 連續虧損 / 單日上限）
-  Discord 即時通知 6 種類型
+  影子訊號（0.70-0.74）記錄但不開倉，用於門檻比較
+  Discord 即時通知 7 種類型
   Paper trading ledger 記錄每筆損益
   Google Drive 每日自動備份
+
+Phase 6: 特徵實驗（已完成）
+  Funding Rate + Open Interest 6 個新特徵
+  重訓後 Sharpe 下降 -> 自動回滾至原模型
+  歷史資料已保留，供未來實驗使用
 ```
 
 ---
@@ -68,7 +74,19 @@ Phase 5: 實盤訊號（24/7 Oracle Cloud VM）
 
 ---
 
-## Discord 通知（6 種）
+## 雙門檻策略
+
+| prob 範圍 | 行為 |
+|---|---|
+| < 0.70 | 不動作 |
+| 0.70 - 0.74 | 寫 shadow 到 ledger，不開倉，自動追蹤 SL/TP/timeout 結算 |
+| >= 0.75 | 正式開倉 + Discord 通知 |
+
+`show_results.py` 會顯示兩個門檻的勝率對比，累積足夠數據後可決定是否降門檻。
+
+---
+
+## Discord 通知（7 種）
 
 ```
 1. 🚀 買入訊號（進場價、SL、TP、部位大小、帳戶淨值）
@@ -95,7 +113,7 @@ Phase 5: 實盤訊號（24/7 Oracle Cloud VM）
 | 部署 | Oracle Cloud Free Tier (Ubuntu 22.04, systemd) |
 | 備份 | rclone + Google Drive（cron 每日自動） |
 | CI | GitHub Actions（push 自動跑 pytest） |
-| 測試 | pytest（131 個測試） |
+| 測試 | pytest（144 個測試） |
 
 ---
 
@@ -115,7 +133,7 @@ pip install -r requirements.txt
 cp .env.example .env
 # 填入 BYBIT_API_KEY、BYBIT_API_SECRET、DISCORD_WEBHOOK_URL
 
-# 4. 抓歷史資料
+# 4. 抓歷史資料（K 棒 + Funding Rate + Open Interest）
 python main.py
 
 # 5. 建構特徵 + 訓練模型 + 回測
@@ -127,7 +145,7 @@ python run_portfolio_backtest.py
 # 6. 啟動實盤訊號 daemon
 python run_live.py
 
-# 7. 查看 paper trading 結果
+# 7. 查看 paper trading 結果（含影子訊號對比）
 python show_results.py
 ```
 
@@ -137,17 +155,20 @@ python show_results.py
 
 ```
 bybit-ml/
-├── config.py                   # 全局設定（幣種、路徑、風控參數）
+├── config.py                   # 全局設定（幣種、路徑、風控參數、門檻）
 ├── run_live.py                 # 實盤 daemon（Phase 5 入口）
-├── show_results.py             # Paper trading 結果查詢
-├── main.py                     # 歷史資料抓取
+├── show_results.py             # Paper trading 結果 + 影子訊號對比
+├── compare_models.py           # 新舊模型 Sharpe 比較 + 自動回滾
+├── main.py                     # 歷史資料抓取（K 棒 + FR + OI）
 ├── build_features.py           # 特徵工程
 ├── train_models.py             # 模型訓練
 ├── run_backtest.py             # 單幣回測
 ├── run_portfolio_backtest.py   # DRC 組合回測
 │
 ├── data/                       # 資料抓取 / 清洗 / 匯出
+│   └── fetcher.py              #   K 棒 + Funding Rate + Open Interest
 ├── features/                   # 指標計算 / 標籤生成 / 驗證
+│   └── indicators.py           #   30+ 技術指標 + FR/OI 衍生特徵
 ├── models/                     # XGBoost 訓練 / 評估 / 報告
 ├── backtest/                   # 回測引擎 / DRC 模擬器 / 報告
 ├── live/                       # 實盤模組
@@ -157,7 +178,8 @@ bybit-ml/
 │   ├── ledger.py               #   交易帳本（crash-safe 原子寫入）
 │   └── notifier.py             #   Discord 推播
 │
-├── tests/                      # pytest（131 個測試）
+├── tests/                      # pytest（144 個測試）
+├── docs/superpowers/           # 設計文件 + 實作計畫
 ├── .github/workflows/test.yml  # GitHub Actions CI
 ├── deploy_oracle.ps1           # 一鍵部署到 Oracle VM
 ├── backup_ledger.ps1           # 本機手動備份 ledger
@@ -176,12 +198,13 @@ bybit-ml/
 │ backup_ledger.ps1│              │   └─ run_live.py (24/7)     │
 │ check_results.ps1│              │       ├─ heartbeat :01/hr   │
 └──────────────────┘              │       ├─ SL/TP/timeout 監控  │
-                                  │       ├─ 風控三道防線        │
-GitHub                            │       └─ Discord 推播       │
-┌──────────────────┐              │                             │
-│ Actions CI       │              │ cron 00:30 UTC              │
-│ (push -> pytest) │              │   └─ rclone -> Google Drive │
-└──────────────────┘              └─────────────────────────────┘
+                                  │       ├─ 影子訊號追蹤        │
+GitHub                            │       ├─ 風控三道防線        │
+┌──────────────────┐              │       └─ Discord 推播       │
+│ Actions CI       │              │                             │
+│ (push -> pytest) │              │ cron 00:30 UTC              │
+└──────────────────┘              │   └─ rclone -> Google Drive │
+                                  └─────────────────────────────┘
 ```
 
 ---
@@ -192,3 +215,4 @@ GitHub                            │       └─ Discord 推播       │
 - `storage/models/`（訓練好的 .pkl）因體積過大不上傳，需自行重訓
 - 所有交易為 **Paper Trading**，非真實下單
 - 風控閾值可在 `config.py` 調整（`MAX_DRAWDOWN_PCT`、`MAX_CONSECUTIVE_LOSSES`、`MAX_DAILY_LOSS_PCT`）
+- 影子門檻可在 `config.py` 調整（`SHADOW_THRESHOLD`）
