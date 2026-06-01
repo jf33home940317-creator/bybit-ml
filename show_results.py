@@ -86,6 +86,32 @@ def main() -> None:
         print(f"  {r['entry_time'][:16]}  {r['symbol']:<10} "
               f"{r['entry_price']:>10.2f} {ep_str:>10} {pnl_str:>10}  {mark}")
 
+    # ── Shadow signal 績效對比 ──────────────────────────────────────
+    shadow_closes = [r for r in records if r.get("status") == "shadow_closed"]
+    if shadow_closes:
+        s_wins   = [r for r in shadow_closes if r.get("outcome") == "win"]
+        s_losses = [r for r in shadow_closes if r.get("outcome") == "loss"]
+        s_pnls   = [r["pnl_pct"] for r in shadow_closes if r.get("pnl_pct") is not None]
+        s_pnl_usd = sum(r.get("pnl_usd", 0) for r in shadow_closes)
+
+        print()
+        print("  ── 影子訊號績效(0.70-0.75 門檻) ──")
+        print(f"  已結算: {len(shadow_closes)} 筆")
+        print(f"  ✅ 贏: {len(s_wins)}  ❌ 輸: {len(s_losses)}")
+        if shadow_closes:
+            s_acc = len(s_wins) / len(shadow_closes) * 100
+            s_avg = sum(s_pnls) / len(s_pnls) if s_pnls else 0
+            print(f"  勝率: {s_acc:.1f}%")
+            print(f"  平均 P&L: {s_avg:+.4f}%")
+            print(f"  假設損益: ${s_pnl_usd:+,.0f} USD")
+
+        if closes:
+            print()
+            print("  ── 門檻對比 ──")
+            real_acc = len(wins) / len(closes) * 100
+            print(f"  正式(>=0.75): 勝率 {real_acc:.1f}%, {len(closes)} 筆")
+            print(f"  影子(0.70-0.74): 勝率 {s_acc:.1f}%, {len(shadow_closes)} 筆")
+
     print("=" * 55)
 
 

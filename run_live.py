@@ -260,6 +260,80 @@ def _check_barriers(positions: list, now: pd.Timestamp) -> tuple[list, list]:
     return remaining, hit
 
 
+def _resolve_shadow_positions(now: pd.Timestamp) -> None:
+    """Check shadow signals for SL/TP hits or timeout, same logic as real positions.
+
+    Shadow entries have status="shadow" and no "outcome" key. Once resolved,
+    a new entry with status="shadow_closed" + outcome/pnl is appended.
+    """
+    records = ledger.load_ledger()
+    unresolved = [
+        (i, r) for i, r in enumerate(records)
+        if r.get("status") == "shadow" and "outcome" not in r
+    ]
+    if not unresolved:
+        return
+
+    for _, shadow in unresolved:
+        exit_time = pd.Timestamp(shadow["exit_time"])
+        if exit_time.tzinfo is None:
+            exit_time = exit_time.tz_localize("UTC")
+
+        # Try to fetch latest candle for barrier check
+        try:
+            df = fetcher.fetch_latest(shadow["symbol"], "60", 2)
+            if len(df) < 2:
+                continue
+            candle = df.iloc[-2]  # last closed bar
+        except Exception:
+            continue
+
+        high = float(candle["high"])
+        low  = float(candle["low"])
+        tp   = shadow["tp_price"]
+        sl   = shadow["sl_price"]
+
+        outcome = None
+        exit_price = None
+
+        # SL/TP barrier check (SL wins ties)
+        if low <= sl:
+            outcome = "loss"
+            exit_price = sl
+        elif high >= tp:
+            outcome = "win"
+            exit_price = tp
+        elif now >= exit_time:
+            # Timeout — use close of last candle
+            exit_price = float(candle["close"])
+            pnl_raw = (exit_price - shadow["entry_price"]) / shadow["entry_price"] * 100
+            outcome = "win" if pnl_raw > 0 else "loss"
+
+        if outcome is None:
+            continue
+
+        pnl_pct = _realized_pnl_pct(shadow["entry_price"], exit_price)
+        # Hypothetical position size (same DRC formula as real trades)
+        sl_dist = shadow["entry_price"] - shadow["sl_price"]
+        if sl_dist > 0:
+            pos_usd = (config.INITIAL_EQUITY * config.RISK_PCT / sl_dist) * shadow["entry_price"]
+        else:
+            pos_usd = 0.0
+        pnl_usd = round(pos_usd * pnl_pct / 100, 2)
+
+        ledger.append_entry({
+            **shadow,
+            "status":           "shadow_closed",
+            "outcome":          outcome,
+            "exit_price":       exit_price,
+            "pnl_pct":          pnl_pct,
+            "pnl_usd":          pnl_usd,
+            "position_usd":     round(pos_usd, 2),
+            "exit_time_actual": now.isoformat(),
+        })
+        logger.info(f"[{shadow['symbol']}] Shadow resolved: {outcome} pnl={pnl_pct:+.4f}%")
+
+
 def heartbeat() -> None:
     now = pd.Timestamp.now("UTC")
     logger.info(f"[heartbeat] {now.isoformat()}")
@@ -450,7 +524,13 @@ def heartbeat() -> None:
 
     state.save_state(current_state)
 
-    # ── 3. 每日健康心跳(每天 UTC 00:01 的 heartbeat 跑這段)─────────
+    # ── 3. 結算 shadow positions ──────────────────────────────────────
+    try:
+        _resolve_shadow_positions(now)
+    except Exception as e:
+        logger.warning(f"Shadow resolution failed (non-fatal): {e}")
+
+    # ── 4. 每日健康心跳(每天 UTC 00:01 的 heartbeat 跑這段)─────────
     if now.hour == 0:
         try:
             records = ledger.load_ledger()
