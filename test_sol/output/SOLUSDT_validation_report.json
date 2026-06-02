@@ -1,0 +1,112 @@
+{
+  "metadata": {
+    "symbol": "SOLUSDT",
+    "total_rows": 33901,
+    "feature_columns": [
+      "rsi_14",
+      "rsi_50",
+      "ppo",
+      "ppo_signal",
+      "ppo_hist",
+      "natr_14",
+      "natr_72",
+      "bband_width_20",
+      "bband_width_50",
+      "ma_bias_20",
+      "ma_bias_50",
+      "ma_bias_200",
+      "turnover_ratio_24",
+      "roc_4",
+      "roc_12",
+      "roc_24",
+      "hour_sin",
+      "hour_cos",
+      "dow_sin",
+      "dow_cos",
+      "is_weekend",
+      "daily_rsi_14",
+      "daily_ma_bias_20",
+      "daily_ma_bias_50",
+      "daily_ma_bias_200",
+      "daily_natr_14",
+      "cross_roc_24"
+    ],
+    "target_columns": [
+      "target_fixed",
+      "target_atr"
+    ]
+  },
+  "class_balance": {
+    "target_fixed": {
+      "positive_rate": 0.3146,
+      "warning": null
+    },
+    "target_atr": {
+      "positive_rate": 0.2538,
+      "warning": null
+    }
+  },
+  "correlations_with_target_fixed": {
+    "rsi_14": 0.0281,
+    "rsi_50": 0.0275,
+    "ma_bias_50": 0.0197,
+    "hour_cos": 0.0197,
+    "ma_bias_20": 0.0185,
+    "ppo": 0.0183,
+    "roc_12": 0.0181,
+    "ppo_hist": 0.0172,
+    "natr_14": 0.0157,
+    "ma_bias_200": 0.0148,
+    "dow_cos": 0.0137,
+    "natr_72": 0.0132,
+    "ppo_signal": 0.013,
+    "daily_ma_bias_200": 0.0125,
+    "roc_24": 0.0119,
+    "bband_width_50": 0.0114,
+    "cross_roc_24": 0.0101,
+    "roc_4": 0.0094,
+    "hour_sin": -0.0091,
+    "daily_rsi_14": 0.0081,
+    "daily_ma_bias_20": 0.0081,
+    "daily_ma_bias_50": 0.0072,
+    "daily_natr_14": 0.007,
+    "bband_width_20": 0.0065,
+    "dow_sin": 0.0047,
+    "turnover_ratio_24": 0.0034,
+    "is_weekend": -0.0003
+  },
+  "correlations_with_target_atr": {
+    "rsi_50": 0.048,
+    "natr_14": -0.0446,
+    "natr_72": -0.0445,
+    "dow_cos": 0.0392,
+    "bband_width_50": -0.0386,
+    "rsi_14": 0.0377,
+    "bband_width_20": -0.0371,
+    "ma_bias_200": 0.0334,
+    "daily_natr_14": -0.0321,
+    "ma_bias_50": 0.0289,
+    "roc_12": 0.0289,
+    "ma_bias_20": 0.0273,
+    "turnover_ratio_24": 0.026,
+    "ppo": 0.0196,
+    "ppo_hist": 0.0184,
+    "roc_24": 0.0174,
+    "daily_rsi_14": 0.0173,
+    "dow_sin": 0.0151,
+    "ppo_signal": 0.0139,
+    "daily_ma_bias_20": 0.0137,
+    "daily_ma_bias_200": 0.012,
+    "roc_4": 0.0114,
+    "hour_sin": -0.0087,
+    "daily_ma_bias_50": 0.0067,
+    "is_weekend": 0.0063,
+    "cross_roc_24": 0.0026,
+    "hour_cos": 0.001
+  },
+  "high_collinearity_warnings": [],
+  "data_quality": {
+    "nan_count": 0,
+    "inf_count": 0
+  }
+}

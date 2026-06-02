@@ -1,0 +1,20 @@
+{
+  "symbol": "SOLUSDT",
+  "target": "target_atr",
+  "initial_equity": 1000000,
+  "final_equity": 250970.53013191777,
+  "optimal_threshold": 0.55,
+  "total_signals": 2165,
+  "executed_trades": 883,
+  "skipped_signals": 1282,
+  "metrics": {
+    "total_return_pct": -74.9029,
+    "cagr_pct": -30.0379,
+    "sharpe_ratio": -0.3701,
+    "max_drawdown_usd": -3209965.23,
+    "max_drawdown_pct": -95.1971,
+    "win_rate": 0.3873,
+    "avg_position_usd": 1393666.49,
+    "avg_holding_bars": 10.29
+  }
+}
