@@ -221,7 +221,7 @@ Next run: tomorrow 06:30
 - `storage/live/predictions.jsonl`: one signal per line, atomic append (reused from BYBIT_ML).
 - `storage/live/ledger.json`: positions, cost basis, marked-to-market.
 - `storage/live/budget_state.json`: `{symbol: budget_left}` per month.
-- Settlement basis: next-day open (matches manual follow-up).
+- Settlement basis: each signal is settled at the **open price of its target market's next trading session after the signal was emitted**. `ledger_settle.py` runs daily at 07:00 TPE and processes any pending signal whose fill bar is now available in yfinance — e.g. a Friday-morning US signal fills at Friday 21:30 TPE (US open) and is settled Monday 07:00; a Monday-morning TW signal fills at Monday 09:00 TPE and is settled Tuesday 07:00. The script does not need to know which day a signal was issued, only whether the fill bar exists.
 
 ### 7.7 Monitoring
 
