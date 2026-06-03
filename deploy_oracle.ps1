@@ -5,7 +5,10 @@
 
 $VM_IP   = "140.238.37.45"
 $VM_USER = "ubuntu"
-$KEY     = "$env:USERPROFILE\Downloads\ssh-key-2026-05-31.key"
+# Try primary key, fallback to oracle_dca
+$KEY_PRIMARY = "$env:USERPROFILE\Downloads\ssh-key-2026-05-31.key"
+$KEY_FALLBACK = "$env:USERPROFILE\.ssh\oracle_dca"
+if (Test-Path $KEY_PRIMARY) { $KEY = $KEY_PRIMARY } else { $KEY = $KEY_FALLBACK }
 $PROJECT = "E:\93050207\python\BYBIT_ML"
 $REMOTE  = "/home/ubuntu/bybit_ml"
 
