@@ -98,10 +98,10 @@ def compute_signal(
     if hourly_df is None:
         hourly_df = fetch_latest(symbol, "60", HOURLY_LOOKBACK)
     import time as _time
-    _time.sleep(0.3)
+    _time.sleep(1.0)
     if daily_df is None:
         daily_df = fetch_latest(symbol, "D", DAILY_LOOKBACK)
-    _time.sleep(0.3)
+    _time.sleep(1.0)
 
     # Drop the partial forming bar that Bybit includes as the last row, then
     # confirm the latest closed bar is fresh enough to act on.
@@ -114,7 +114,7 @@ def compute_signal(
     ref_df = None
     if symbol != "BTCUSDT":
         if btc_hourly_df is None:
-            _time.sleep(0.3)
+            _time.sleep(1.0)
             btc_hourly_df = fetch_latest("BTCUSDT", "60", HOURLY_LOOKBACK)
         btc_hourly_df = _drop_partial_bars(btc_hourly_df, period_hours=1)
         ref_df = btc_hourly_df[["timestamp", "close"]].rename(columns={"close": "ref_close"})
