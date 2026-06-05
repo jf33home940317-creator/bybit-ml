@@ -16,6 +16,8 @@ class _NumpyEncoder(json.JSONEncoder):
             return int(obj)
         if isinstance(obj, np.floating):
             return float(obj)
+        if isinstance(obj, (pd.Timestamp, np.datetime64)):
+            return pd.Timestamp(obj).isoformat()
         return super().default(obj)
 
 

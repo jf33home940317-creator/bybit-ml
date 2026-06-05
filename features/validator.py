@@ -8,12 +8,20 @@ from scipy.stats import pointbiserialr
 
 logger = logging.getLogger(__name__)
 
-TARGET_COLS = ["target_fixed", "target_atr"]
+TARGET_COLS = ["target_fixed", "target_atr", "target_atr_short"]
 _EXCLUDE = {
     "timestamp", "open", "high", "low", "close", "volume", "turnover",
     "daily_open", "daily_high", "daily_low", "daily_close",
     "daily_volume", "daily_turnover",
     "atr_14", "atr_72", "daily_atr_14",
+}
+# Phase 6 funding-rate / open-interest experiment was rolled back model-wise
+# (Sharpe degraded) but indicators.py still computes the columns. Exclude
+# them from feature_columns so V1 (and new short) models train on the
+# original 28-feature set.
+_EXCLUDE_EXPERIMENTAL = {
+    "funding_rate", "funding_rate_ma_24", "funding_zscore_30d",
+    "oi_change_1h", "oi_change_24h", "oi_price_divergence",
 }
 
 
@@ -21,7 +29,12 @@ def report(df: pd.DataFrame, output_path: Path, symbol: str = "") -> None:
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    feature_cols = [c for c in df.columns if c not in _EXCLUDE and c not in TARGET_COLS]
+    feature_cols = [
+        c for c in df.columns
+        if c not in _EXCLUDE
+        and c not in TARGET_COLS
+        and c not in _EXCLUDE_EXPERIMENTAL
+    ]
 
     result = {
         "metadata": {
