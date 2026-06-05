@@ -9,5 +9,5 @@ logging.basicConfig(
 
 if __name__ == "__main__":
     for symbol in config.SYMBOLS:
-        for target in ["target_fixed", "target_atr"]:
+        for target in ["target_fixed", "target_atr", "target_atr_short"]:
             builder.build(symbol, target)

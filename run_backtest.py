@@ -29,7 +29,7 @@ def main() -> None:
         with open(report_path, encoding='utf-8') as f:
             feature_cols = json.load(f)["metadata"]["feature_columns"]
 
-        for target in ["target_fixed", "target_atr"]:
+        for target in ["target_fixed", "target_atr", "target_atr_short"]:
             logger.info(f"[{symbol}][{target}] Loading fold models...")
             fold_paths = [models_dir / f"{symbol}_{target}_fold{k}.pkl" for k in range(1, 6)]
             missing = [p for p in fold_paths if not p.exists()]

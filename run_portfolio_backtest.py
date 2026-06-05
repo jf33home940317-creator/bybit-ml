@@ -13,6 +13,8 @@ logger = logging.getLogger(__name__)
 COMBINATIONS = [
     ("ETHUSDT", "target_atr"),
     ("BTCUSDT", "target_atr"),
+    ("ETHUSDT", "target_atr_short"),
+    ("BTCUSDT", "target_atr_short"),
 ]
 
 
