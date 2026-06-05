@@ -138,7 +138,11 @@ def save_portfolio_report(
     target: str,
     output_dir: Path,
 ) -> None:
-    """Write portfolio_report.json for the given symbol/target combination."""
+    """Write portfolio_report.json for the given symbol/target combination.
+
+    Includes closed_trades + equity_log so downstream tools (combine_long_short)
+    can reconstruct the equity timeline without re-running the simulation.
+    """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -154,6 +158,8 @@ def save_portfolio_report(
         'executed_trades':   results['executed_trades'],
         'skipped_signals':   results['skipped_signals'],
         'metrics':           results['metrics'],
+        'closed_trades':     results['closed_trades'],
+        'equity_log':        [list(pair) for pair in results['equity_log']],
     }
 
     path = output_dir / f"{symbol}_{target}_portfolio_report.json"
