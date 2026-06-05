@@ -122,6 +122,69 @@ class TestComputeTradePnl:
         assert abs(row['pnl'] - (-0.01 - 0.002)) < 1e-9
         assert row['holding_bars'] == 1
 
+    def test_short_pnl_tp_hit(self):
+        """Short TP at close - 3*ATR. Bar 1 low <= TP → pnl = +3*ATR_pct - fee."""
+        df = _make_df(100, close=1000.0)
+        # ATR = 10 (close * 0.01). Short TP = 1000 - 30 = 970.
+        # Bar 1: low=965 (≤ 970), high=1005 (< short SL 1015) → TP first.
+        df.loc[1, 'high'] = 1005.0
+        df.loc[1, 'low']  = 965.0
+
+        trades = compute_trade_pnl(df, signal_indices=[0],
+                                    target='target_atr', direction='short')
+
+        assert len(trades) == 1
+        row = trades.iloc[0]
+        assert row['outcome'] == 'tp'
+        # (1000 - 970) / 1000 = 0.03 → pnl = 0.03 - 0.002 = 0.028
+        assert abs(row['pnl'] - 0.028) < 1e-9
+        assert row['holding_bars'] == 1
+
+    def test_short_pnl_sl_hit(self):
+        """Short SL at close + 1.5*ATR. Bar 1 high >= SL → pnl = -1.5*ATR_pct - fee."""
+        df = _make_df(100, close=1000.0)
+        # ATR = 10. Short SL = 1015.
+        # Bar 1: high=1016 (≥ SL), low=975 (> TP 970) → SL first.
+        df.loc[1, 'high'] = 1016.0
+        df.loc[1, 'low']  = 975.0
+
+        trades = compute_trade_pnl(df, signal_indices=[0],
+                                    target='target_atr', direction='short')
+
+        assert len(trades) == 1
+        row = trades.iloc[0]
+        assert row['outcome'] == 'sl'
+        # (1000 - 1015) / 1000 = -0.015 → pnl = -0.015 - 0.002 = -0.017
+        assert abs(row['pnl'] - (-0.017)) < 1e-9
+
+    def test_short_fee_is_absolute_not_sign_multiplied(self):
+        """Fee deducted as positive scalar regardless of direction."""
+        df = _make_df(100, close=1000.0)
+        df.loc[1, 'high'] = 1005.0
+        df.loc[1, 'low']  = 965.0
+        trades = compute_trade_pnl(df, signal_indices=[0],
+                                    target='target_atr', direction='short',
+                                    fee=0.005)
+        # raw = +0.03, with fee=0.005 → 0.025. NOT 0.03 - (-0.005) = 0.035.
+        assert abs(trades.iloc[0]['pnl'] - 0.025) < 1e-9
+
+    def test_fixed_short_raises_not_implemented(self):
+        """YAGNI guard: target_fixed + direction=short → NotImplementedError."""
+        df = _make_df(100, close=1000.0)
+        with pytest.raises(NotImplementedError, match="Fixed target"):
+            compute_trade_pnl(df, signal_indices=[0],
+                              target='target_fixed', direction='short')
+
+    def test_long_direction_default_unchanged(self):
+        """Direction defaults to 'long' — existing call sites stay working."""
+        df = _make_df(100, close=1000.0)
+        df.loc[1, 'high'] = 1025.0
+        df.loc[1, 'low']  = 995.0
+        # No direction arg → long behavior
+        trades = compute_trade_pnl(df, signal_indices=[0], target='target_fixed')
+        assert trades.iloc[0]['outcome'] == 'tp'
+        assert abs(trades.iloc[0]['pnl'] - 0.018) < 1e-9
+
 
 class TestRunThresholdScan:
 
