@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from backtest.engine import generate_oof_probabilities, compute_trade_pnl
+from backtest.engine import generate_oof_probabilities, compute_trade_pnl, _direction_from_target
 
 
 def run_portfolio_simulation(
@@ -12,12 +12,17 @@ def run_portfolio_simulation(
     initial_equity: float = 1_000_000,
     risk_pct: float = 0.02,
     max_concurrent: int = 3,
+    direction: str = None,
 ) -> dict:
     """
     DRC 風控投資組合模擬。
 
     Phase 1：重用 Phase 4.1 函數預計算原始交易清單（忽略併發）。
     Phase 2：事件驅動順序迴圈疊加 Fixed Risk Sizing、Concurrency Control、複利。
+
+    direction: "long" (default for backwards-compat) or "short". If None,
+    derived from target name (suffix "_short" → "short"). sl_distance stays
+    positive in both directions — it's a magnitude used for position sizing.
 
     Returns dict with keys:
         closed_trades    list[dict]          所有已平倉交易（含 trade_roe）
@@ -27,13 +32,18 @@ def run_portfolio_simulation(
         executed_trades  int                 實際成交筆數
         skipped_signals  int                 因容量上限跳過的訊號數
         metrics          dict                績效指標
+        direction        str                 "long" or "short"
     """
+    if direction is None:
+        direction = _direction_from_target(target)
+
     # ── Phase 1：預計算 ──────────────────────────────────────────────
     proba = generate_oof_probabilities(df, feature_cols, fold_models)
     signal_indices = np.where(proba >= optimal_threshold)[0].tolist()
     total_signals = len(signal_indices)
 
-    raw_trades_df = compute_trade_pnl(df, signal_indices, target)
+    raw_trades_df = compute_trade_pnl(df, signal_indices, target,
+                                       direction=direction)
     # Update to count only signals that yielded valid trades (some near end-of-data get dropped)
     total_signals = len(raw_trades_df)
     if total_signals == 0:
@@ -70,7 +80,7 @@ def run_portfolio_simulation(
             skipped += 1
             continue
 
-        # C. 動態部位計算
+        # C. 動態部位計算 — sl_distance is a positive magnitude (direction-agnostic)
         if target == 'target_fixed':
             sl_distance = row.entry_price * 0.01        # 固定 1% SL
         else:
@@ -123,6 +133,7 @@ def run_portfolio_simulation(
         'risk_pct':          risk_pct,
         'max_concurrent':    max_concurrent,
         'optimal_threshold': optimal_threshold,
+        'direction':         direction,
     }
 
 

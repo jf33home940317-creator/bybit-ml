@@ -191,3 +191,27 @@ class TestNoOpenTradesLeak:
         # equity_log 最後一筆 equity = final_equity
         if results['equity_log']:
             assert abs(results['equity_log'][-1][1] - results['final_equity']) < 1e-6
+
+
+class TestPortfolioShort:
+    def test_short_direction_runs_drc(self):
+        """Portfolio sim with direction='short' executes DRC trades with positive position_qty."""
+        df = _make_df(300)
+        # Manufacture price drops so short TP fires
+        df.loc[1::25, 'low'] = df['close'] * 0.96   # below short TP (close - 3% nominal)
+        fold_models = [_ConstantModel(0.90)] * 5
+
+        results = run_portfolio_simulation(
+            df, [], fold_models,
+            target='target_atr',
+            optimal_threshold=0.50,
+            initial_equity=100_000,
+            risk_pct=0.02,
+            max_concurrent=2,
+            direction='short',
+        )
+
+        assert results['executed_trades'] >= 1
+        for t in results['closed_trades']:
+            assert t['position_qty'] > 0, "position_qty must be positive regardless of direction"
+            assert t['sl_distance'] > 0,  "sl_distance must be positive (1.5*ATR magnitude)"
