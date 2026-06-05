@@ -21,11 +21,19 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
         highs, lows,
         tp=closes * (1.0 + TP_PCT_FIXED),
         sl=closes * (1.0 - SL_PCT_FIXED),
+        direction="long",
     )
     df["target_atr"] = _barrier_labels(
         highs, lows,
         tp=closes + ATR_TP_MULT * atrs,
         sl=closes - ATR_SL_MULT * atrs,
+        direction="long",
+    )
+    df["target_atr_short"] = _barrier_labels(
+        highs, lows,
+        tp=closes - ATR_TP_MULT * atrs,
+        sl=closes + ATR_SL_MULT * atrs,
+        direction="short",
     )
     return df
 
@@ -35,6 +43,7 @@ def _barrier_labels(
     lows: np.ndarray,
     tp: np.ndarray,
     sl: np.ndarray,
+    direction: str = "long",
 ) -> np.ndarray:
     n = len(highs)
     n_valid = n - HORIZON
@@ -46,14 +55,20 @@ def _barrier_labels(
     future_highs = sliding_window_view(highs[1:], HORIZON)
     future_lows  = sliding_window_view(lows[1:],  HORIZON)
 
-    tp_hit = future_highs >= tp[:n_valid, np.newaxis]  # (n_valid, HORIZON)
-    sl_hit = future_lows  <= sl[:n_valid, np.newaxis]  # (n_valid, HORIZON)
+    if direction == "long":
+        tp_hit = future_highs >= tp[:n_valid, np.newaxis]
+        sl_hit = future_lows  <= sl[:n_valid, np.newaxis]
+    elif direction == "short":
+        tp_hit = future_lows  <= tp[:n_valid, np.newaxis]
+        sl_hit = future_highs >= sl[:n_valid, np.newaxis]
+    else:
+        raise ValueError(f"direction must be 'long' or 'short', got {direction!r}")
 
     # First hit index; HORIZON means "never hit"
     tp_first = np.where(tp_hit.any(axis=1), np.argmax(tp_hit, axis=1), HORIZON)
     sl_first = np.where(sl_hit.any(axis=1), np.argmax(sl_hit, axis=1), HORIZON)
 
-    # Conservative pessimism: SL wins ties (same-bar collision → SL)
+    # SL wins ties regardless of direction (conservative pessimism)
     wins_tp = (sl_first > tp_first) & (tp_first < HORIZON)
     labels[:n_valid] = np.where(wins_tp, 1.0, 0.0)
     return labels
