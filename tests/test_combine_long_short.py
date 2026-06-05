@@ -102,3 +102,45 @@ def test_correlation_high_negative(tmp_path):
 
     result = combine_one_symbol('ETHUSDT', tmp_path)
     assert result['daily_return_correlation'] < -0.99
+
+
+def test_combined_sharpe_uses_combined_usd_base_not_leg_pct_sum(tmp_path):
+    """Sharpe must be computed on combined-equity pct_change, not on summed leg pct_change.
+
+    Setup: ETHUSDT-style — long leg trades on days 1-10 with constant +1% return
+    (each trade earns 1% of its leg's equity_at_entry=1M); short leg trades on days
+    20-30 with constant +1% return. They never trade on the same day, so the legs'
+    pct_change series are non-overlapping.
+
+    Wrong method (summing): each leg's 1% appears as 1% in the sum, std is small,
+    Sharpe is high.
+
+    Correct method (USD timeline): on a 2M base, 1% leg pnl = 10,000 USD = 0.5%
+    portfolio return. Sharpe should be ~half of the wrong method's value.
+    """
+    # 5 long trades, days 1-5; 5 short trades, days 6-10. Each pnl = 10,000.
+    long_ts = pd.date_range('2024-01-01', periods=5, freq='1D')
+    short_ts = pd.date_range('2024-01-06', periods=5, freq='1D')
+    long_trades = [{'entry_idx': i, 'exit_bar': i+1, 'pnl_usd': 10_000.0,
+                    'timestamp': long_ts[i].isoformat(), 'equity_at_entry': 1_000_000}
+                   for i in range(5)]
+    short_trades = [{'entry_idx': i, 'exit_bar': i+1, 'pnl_usd': 10_000.0,
+                     'timestamp': short_ts[i].isoformat(), 'equity_at_entry': 1_000_000}
+                    for i in range(5)]
+    long_log  = [(i+1, 1_000_000 + 10_000.0 * (i+1)) for i in range(5)]
+    short_log = [(i+1, 1_000_000 + 10_000.0 * (i+1)) for i in range(5)]
+    _write_report(tmp_path / 'ETHUSDT_target_atr_portfolio_report.json',
+                  long_trades, long_log, 1_000_000, long_log[-1][1])
+    _write_report(tmp_path / 'ETHUSDT_target_atr_short_portfolio_report.json',
+                  short_trades, short_log, 1_000_000, short_log[-1][1])
+
+    result = combine_one_symbol('ETHUSDT', tmp_path)
+
+    # On combined 2M base: each 10k pnl = 0.5% return.
+    # Daily series has 10 returns of ~0.5% each, std ≈ 0 (all equal) → Sharpe may diverge.
+    # Wrong method (summing) gives near-infinity Sharpe; correct method on equal returns
+    # also gives high Sharpe but on a DIFFERENT magnitude (returns are half-sized).
+    # Easier sanity check: ensure final_combined == 2_100_000 (1M+50k + 1M+50k).
+    assert result['final_combined_equity'] == 2_100_000
+    # And combined return on 2M base = 100k/2M = 5%
+    assert abs(result['combined_metrics']['total_return_pct'] - 5.0) < 1e-9

@@ -78,18 +78,28 @@ def combine_one_symbol(symbol: str, backtest_dir: Path) -> dict:
     peak   = equity
     max_dd_pct = 0.0
     max_dd_usd = 0.0
+    equity_timeline = []  # (timestamp, equity_after_event) — used for Sharpe too
     for ts, pnl in all_events:
         equity += pnl
+        equity_timeline.append((ts, equity))
         peak = max(peak, equity)
         dd_pct = (equity - peak) / peak * 100.0 if peak > 0 else 0.0
         if dd_pct < max_dd_pct:
             max_dd_pct = dd_pct
             max_dd_usd = equity - peak
 
-    # Combined Sharpe via combined daily returns
-    combined_daily = (long_daily.fillna(0) + short_daily.fillna(0))
-    if len(combined_daily) >= 2 and combined_daily.std() > 0:
-        sharpe = float(combined_daily.mean() / combined_daily.std() * np.sqrt(365))
+    # Combined Sharpe — compute on the COMBINED USD equity timeline, not by
+    # summing two pct_change series (each leg's pct_change is normalized to
+    # its own 1M base, so summing double-weights single-leg days).
+    if equity_timeline:
+        eq_idx = pd.to_datetime([t for t, _ in equity_timeline], utc=True)
+        eq_series = pd.Series([e for _, e in equity_timeline], index=eq_idx)
+        combined_daily_eq = eq_series.resample('1D').last().ffill()
+        combined_daily_returns = combined_daily_eq.pct_change().dropna()
+        if len(combined_daily_returns) >= 2 and combined_daily_returns.std() > 0:
+            sharpe = float(combined_daily_returns.mean() / combined_daily_returns.std() * np.sqrt(365))
+        else:
+            sharpe = 0.0
     else:
         sharpe = 0.0
 
