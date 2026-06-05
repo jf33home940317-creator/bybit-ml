@@ -137,8 +137,12 @@ def run_threshold_scan(
     thresholds: np.ndarray = None,
     fee: float = 0.002,
     min_trades: int = 20,
+    direction: str = None,
 ) -> dict:
     """Scan signal thresholds and return metrics + optimal threshold by Sharpe.
+
+    direction: "long" or "short". If None, derived from target name
+    (suffix "_short" → "short", else "long").
 
     Returns dict with keys:
         threshold_scan      - list of metric dicts, one per valid threshold
@@ -147,6 +151,9 @@ def run_threshold_scan(
         optimal_trades_df   - trades DataFrame for optimal_threshold (for equity curve)
         total_years         - float, used in Sharpe normalisation
     """
+    if direction is None:
+        direction = _direction_from_target(target)
+
     if thresholds is None:
         thresholds = np.round(np.linspace(0.50, 0.80, 31), 2)
 
@@ -164,7 +171,8 @@ def run_threshold_scan(
         if len(signal_indices) < min_trades:
             continue
 
-        trades_df = compute_trade_pnl(df, signal_indices, target, fee)
+        trades_df = compute_trade_pnl(df, signal_indices, target, fee,
+                                        direction=direction)
         if len(trades_df) < min_trades:
             continue
 

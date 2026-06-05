@@ -208,3 +208,22 @@ class TestRunThresholdScan:
         scan_thresholds = [entry['threshold'] for entry in results['threshold_scan']]
         assert 0.65 not in scan_thresholds, "threshold with 0 trades must be filtered"
         assert results['optimal_threshold'] == 0.50
+
+
+class TestRunThresholdScanShort:
+    def test_threshold_scan_short_runs_without_error(self):
+        """Threshold scan with direction='short' returns same shape as long."""
+        from backtest.engine import run_threshold_scan
+        df = _make_df(600, close=1000.0)
+        # Manufacture a price drop at bar 1 of each potential signal so short TP hits
+        df.loc[1::24, 'low'] = 965.0  # short TP price = 970
+        fold_models = [_ConstantModel(0.85)] * 5
+        result = run_threshold_scan(
+            df, feature_cols=[], fold_models=fold_models,
+            target='target_atr', direction='short',
+            thresholds=np.array([0.50, 0.70, 0.80]),
+            min_trades=1,
+        )
+        assert 'threshold_scan' in result
+        assert 'optimal_threshold' in result
+        assert result['optimal_threshold'] in (0.50, 0.70, 0.80, None)
