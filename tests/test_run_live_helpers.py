@@ -306,3 +306,105 @@ class TestCheckRiskGuards:
         now = pd.Timestamp("2026-06-01T12:00:00+00:00")
         result = _check_risk_guards([], now)
         assert result["blocked"] is False
+
+
+# ─── RECORD_ONLY mode ──────────────────────────────────────────────────────────
+
+class TestBuildRecordOnlySummary:
+    """The parked-model heartbeat reports probabilities, not trades."""
+
+    @staticmethod
+    def _write(tmp_path, rows):
+        p = tmp_path / "prob_history.csv"
+        lines = ["timestamp,symbol,probability,signal,close"]
+        lines += [f"{ts},ETHUSDT,{prob},False,2000.0" for ts, prob in rows]
+        p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return p
+
+    def test_reports_last_24h_distribution(self, tmp_path):
+        from run_live import _build_record_only_summary
+        now = pd.Timestamp("2026-09-02T00:01:00+00:00")
+        path = self._write(tmp_path, [
+            ("2026-08-31T00:00:00+00:00", 0.90),   # older than 24h — excluded
+            ("2026-09-01T06:00:00+00:00", 0.40),
+            ("2026-09-01T18:00:00+00:00", 0.60),
+        ])
+        msg = _build_record_only_summary(path, now)
+
+        assert "僅記錄模式" in msg
+        assert "過去 24h 評分: 2 筆" in msg
+        assert "0.5000" in msg            # mean of 0.40 and 0.60
+        assert "0.4000~0.6000" in msg
+        assert "累計紀錄: 3 筆" in msg     # total counts every row, not just 24h
+
+    def test_flags_a_silent_day(self, tmp_path):
+        from run_live import _build_record_only_summary
+        now = pd.Timestamp("2026-09-02T00:01:00+00:00")
+        path = self._write(tmp_path, [("2026-08-01T00:00:00+00:00", 0.5)])
+        assert "尚無機率紀錄" in _build_record_only_summary(path, now)
+
+    def test_missing_file_does_not_raise(self, tmp_path):
+        from run_live import _build_record_only_summary
+        now = pd.Timestamp("2026-09-02T00:01:00+00:00")
+        msg = _build_record_only_summary(tmp_path / "nope.csv", now)
+        assert "尚無機率紀錄" in msg
+
+
+class TestRecordOnlyHeartbeat:
+    """RECORD_ONLY must still score and log, but never open or shadow a position."""
+
+    @staticmethod
+    def _patch(monkeypatch, record_only, probability):
+        import config
+        import run_live
+
+        monkeypatch.setattr(config, "RECORD_ONLY", record_only)
+        monkeypatch.setattr(run_live, "_is_disabled", lambda *a, **k: False)
+        monkeypatch.setattr(run_live, "_load_threshold", lambda *a: 0.75)
+        monkeypatch.setattr(run_live, "_get_assets", lambda *a: ([], []))
+        monkeypatch.setattr(run_live, "_compute_current_equity", lambda: 1_000_000.0)
+        monkeypatch.setattr(run_live.pipeline, "compute_signal", lambda *a, **k: {
+            "symbol": "ETHUSDT",
+            "timestamp": "2026-09-01T12:00:00+00:00",
+            "close": 2000.0,
+            "atr_14": 20.0,
+            "probability": probability,
+            "signal": probability >= 0.75,
+        })
+        monkeypatch.setattr(run_live.state, "load_state", lambda: {"positions": []})
+        monkeypatch.setattr(run_live.ledger, "load_ledger", lambda: [])
+        monkeypatch.setattr(run_live.notifier, "send", lambda *a, **k: None)
+
+        saved, ledgered, probs = [], [], []
+        monkeypatch.setattr(run_live.state, "save_state", lambda s: saved.append(s))
+        monkeypatch.setattr(run_live.ledger, "append_entry", lambda e: ledgered.append(e))
+        monkeypatch.setattr(run_live, "_record_prob", lambda *a, **k: probs.append(a))
+        return saved, ledgered, probs
+
+    def test_records_prob_but_opens_nothing(self, monkeypatch):
+        import run_live
+        saved, ledgered, probs = self._patch(monkeypatch, record_only=True, probability=0.90)
+        run_live.heartbeat()
+
+        assert len(probs) == 1                    # still scored and logged
+        assert ledgered == []                     # no position, no shadow entry
+        assert saved[-1]["positions"] == []
+
+    def test_shadow_entry_also_suppressed(self, monkeypatch):
+        import run_live
+        # 0.72 sits between SHADOW_THRESHOLD (0.70) and the 0.75 entry threshold
+        saved, ledgered, probs = self._patch(monkeypatch, record_only=True, probability=0.72)
+        run_live.heartbeat()
+
+        assert len(probs) == 1
+        assert ledgered == []
+
+    def test_trading_still_works_when_disabled(self, monkeypatch):
+        import run_live
+        saved, ledgered, probs = self._patch(monkeypatch, record_only=False, probability=0.90)
+        run_live.heartbeat()
+
+        assert len(probs) == 1
+        assert len(ledgered) == 1
+        assert ledgered[0]["status"] == "open"
+        assert len(saved[-1]["positions"]) == 1

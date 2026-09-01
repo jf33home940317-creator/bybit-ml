@@ -61,6 +61,33 @@ def _build_daily_summary(records: list, current_state: dict, now: pd.Timestamp) 
     )
 
 
+def _build_record_only_summary(csv_path: Path, now: pd.Timestamp) -> str:
+    """Daily heartbeat for RECORD_ONLY mode.
+
+    Reports the probability distribution instead of trade activity — in this mode
+    "0 trades" is the expected state, so a trade-shaped summary would read as a
+    system waiting for an opportunity rather than one that is deliberately parked.
+    """
+    header = "[BYBIT_ML] 📉 **24h 記錄心跳**(僅記錄模式,不交易)"
+    try:
+        df = pd.read_csv(csv_path, parse_dates=["timestamp"])
+    except Exception:
+        return f"{header}\n過去 24h: 尚無機率紀錄"
+
+    cutoff = now - pd.Timedelta(hours=24)
+    recent = df[df["timestamp"] >= cutoff]
+    if recent.empty:
+        return f"{header}\n過去 24h: 尚無機率紀錄 ⚠️"
+
+    p = recent["probability"]
+    return (
+        f"{header}\n"
+        f"過去 24h 評分: {len(recent)} 筆\n"
+        f"機率 平均 {p.mean():.4f} / 區間 {p.min():.4f}~{p.max():.4f}\n"
+        f"累計紀錄: {len(df):,} 筆"
+    )
+
+
 class _ErrorThrottle:
     """Rate-limit identical error alerts to one per cooldown window."""
 
@@ -408,10 +435,14 @@ def heartbeat() -> None:
     disabled = _is_disabled()
     if disabled:
         logger.info("[heartbeat] Kill switch active (.disabled exists) — skipping signal generation")
+    if config.RECORD_ONLY:
+        logger.info("[heartbeat] RECORD_ONLY — scoring and logging only, no positions")
 
-    # Risk guards: check MDD / consecutive losses / daily loss
+    # Risk guards: check MDD / consecutive losses / daily loss.
+    # Pointless in RECORD_ONLY mode (no trades can be opened), and it would read
+    # the ledger every hour for nothing.
     risk_check = {"blocked": False, "reason": ""}
-    if not disabled:
+    if not disabled and not config.RECORD_ONLY:
         try:
             all_records = ledger.load_ledger()
             risk_check = _check_risk_guards(all_records, now)
@@ -460,6 +491,11 @@ def heartbeat() -> None:
                          result["probability"], result["signal"], result["close"])
         except Exception as e:
             logger.warning(f"[{symbol}] Failed to record prob: {e}")
+
+        # RECORD_ONLY stops here: no positions, no shadow entries. Settlement of
+        # anything already open still runs above, so leftovers resolve normally.
+        if config.RECORD_ONLY:
+            continue
 
         if not result["signal"]:
             # Shadow signal: prob between SHADOW_THRESHOLD and optimal — record but don't trade
@@ -533,8 +569,11 @@ def heartbeat() -> None:
     # ── 4. 每日健康心跳(每天 UTC 00:01 的 heartbeat 跑這段)─────────
     if now.hour == 0:
         try:
-            records = ledger.load_ledger()
-            notifier.send(_build_daily_summary(records, current_state, now))
+            if config.RECORD_ONLY:
+                notifier.send(_build_record_only_summary(PROB_CSV, now))
+            else:
+                records = ledger.load_ledger()
+                notifier.send(_build_daily_summary(records, current_state, now))
             logger.info("[heartbeat] Daily summary sent")
         except Exception as e:
             logger.error(f"Daily summary failed: {e}")
@@ -545,6 +584,9 @@ def heartbeat() -> None:
 def main() -> None:
     if not config.DISCORD_WEBHOOK_URL:
         logger.warning("DISCORD_WEBHOOK_URL not set — Discord notifications disabled")
+    if config.RECORD_ONLY:
+        logger.info("RECORD_ONLY mode: scoring only, no positions will be opened "
+                    "(set BYBIT_ML_RECORD_ONLY=0 to re-enable trading)")
     logger.info("Live signal daemon starting — running once immediately...")
     heartbeat()
     schedule.every().hour.at(":01").do(heartbeat)
